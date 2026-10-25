@@ -12,7 +12,7 @@
 // to it. Old cached files are deleted automatically.
 // ==========================================================================
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '2.0.0';
 const CACHE_PREFIX = 'uang-bulanan-';
 const CACHE_NAME = `${CACHE_PREFIX}${APP_VERSION}`;
 
@@ -29,6 +29,8 @@ const FILES = [
   './js/data.js',
   './js/format.js',
   './js/logic.js',
+  './js/motion.js',
+  './js/planner.js',
   './js/pwa.js',
   './js/storage.js',
   './js/store.js',
@@ -39,7 +41,9 @@ const FILES = [
   './js/screens/expense-form.js',
   './js/screens/pengaturan.js',
   './js/screens/pengeluaran.js',
+  './js/screens/plan-form.js',
   './js/screens/pos.js',
+  './js/screens/rencana.js',
   './js/screens/ringkasan.js',
   './js/screens/rutin.js',
   './js/screens/setup.js',

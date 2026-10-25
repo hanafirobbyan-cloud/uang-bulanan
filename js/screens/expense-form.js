@@ -6,6 +6,20 @@ import { getPeriod, isValidDateStr } from '../logic.js';
 import { MAX_NOTE_LENGTH } from '../data.js';
 import * as store from '../store.js';
 
+/** Delete an expense right away, with "Urungkan" (undo) in a toast for a few seconds. Used by swipe-to-delete. */
+export function deleteExpenseWithUndo(expense) {
+  store.deleteExpense(expense.id);
+  toast('Pengeluaran dihapus.', 'info', {
+    action: {
+      label: 'Urungkan',
+      onClick: () => {
+        store.restoreExpense(expense);
+        toast('Pengeluaran dikembalikan.', 'success');
+      },
+    },
+  });
+}
+
 /**
  * Open the expense form. Call it directly from a tap so the keyboard opens on iPhone.
  *   expense – an existing expense to edit (or nothing to add a new one)
@@ -97,6 +111,7 @@ export function openExpenseForm(ctx, { expense = null, prefill = {}, onSaved = n
       field({ label: 'Catatan (opsional)', control: noteInput, forId: noteId }),
     ],
     footer,
+    fields: { amount: amount.element, bucket: bucketChoice.element, wallet: walletChoice.element, date: dateInput },
     onSubmit: () => {
       const fields = {
         amount: amount.getValue(),

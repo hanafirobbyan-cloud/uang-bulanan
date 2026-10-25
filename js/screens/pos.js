@@ -2,6 +2,7 @@
 
 import { append, h, toast, errorMessage } from '../ui.js';
 import { screenHeader, card, bucketEditor } from '../components.js';
+import { shake } from '../motion.js';
 import * as store from '../store.js';
 
 export const title = 'Pos anggaran';
@@ -27,6 +28,7 @@ export function render(main, ctx) {
       error.textContent = errorMessage(err);
       error.hidden = false;
       error.scrollIntoView({ block: 'center' });
+      shake(error);
     }
   });
 

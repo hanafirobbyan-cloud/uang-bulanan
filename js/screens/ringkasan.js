@@ -1,7 +1,7 @@
 // Ringkasan: totals of one period, per bucket and per wallet, and "Pindahkan sisa ke Tabungan".
 
 import { append, h, icon, moneyInput, openDialog, confirmDialog, toast, errorMessage, alertDialog } from '../ui.js';
-import { screenHeader, card, money, bucketStatus, periodControls } from '../components.js';
+import { screenHeader, card, money, bucketStatus, periodControls, keyed } from '../components.js';
 import { periodSummary, leftoverMoveStatus } from '../logic.js';
 import { checkAmount } from '../data.js';
 import { formatRupiah, formatPeriod, formatDate } from '../format.js';
@@ -16,12 +16,12 @@ export function render(main, ctx) {
 
   append(
     main,
-    screenHeader('Ringkasan', 'Uang masuk, keluar, dan sisa per periode.'),
-    picker,
-    totalsCard(s, ctx),
-    savingsCard(s, ctx),
-    card('Per pos', h('ul', { class: 'bucket-list' }, s.buckets.map(bucketStatus))),
-    walletsCard(s),
+    keyed(screenHeader('Ringkasan', 'Uang masuk, keluar, dan sisa per periode.'), 'header'),
+    keyed(picker, 'picker'),
+    keyed(totalsCard(s, ctx), 'card:totals'),
+    keyed(savingsCard(s, ctx), 'card:savings'),
+    keyed(card('Per pos', h('ul', { class: 'bucket-list' }, s.buckets.map((b) => bucketStatus(b, 'rb')))), 'card:buckets'),
+    keyed(walletsCard(s), 'card:wallets'),
     historyCard(data),
   );
 }
@@ -39,13 +39,13 @@ function totalsCard(s, ctx) {
       { class: 'totals' },
       line(
         'Pemasukan',
-        money(s.income),
+        money(s.income, '', 'ringkasan:income'),
         s.incomeIsOverride ? h('span', { class: 'tag' }, 'khusus periode ini') : null,
       ),
-      line('Pengeluaran tercatat', money(s.recordedTotal), h('small', { class: 'muted' }, ` (${s.expenseCount} catatan)`)),
+      line('Pengeluaran tercatat', money(s.recordedTotal, '', 'ringkasan:recorded'), h('small', { class: 'muted' }, ` (${s.expenseCount} catatan)`)),
       line('Pengeluaran rutin', money(s.recurringTotal)),
-      line('Total pengeluaran', money(s.totalSpent), null, 'is-strong'),
-      line('Sisa', money(s.leftover), negative ? h('span', { class: 'tag tag-danger' }, 'Melebihi anggaran') : null, 'is-strong is-big'),
+      line('Total pengeluaran', money(s.totalSpent, '', 'ringkasan:total'), null, 'is-strong'),
+      line('Sisa', money(s.leftover, '', 'ringkasan:sisa'), negative ? h('span', { class: 'tag tag-danger' }, 'Melebihi anggaran') : null, 'is-strong is-big'),
     ),
     s.expenseCount === 0 ? h('p', { class: 'hint' }, 'Belum ada pengeluaran tercatat di periode ini.') : null,
     h(
@@ -168,7 +168,7 @@ function walletsCard(s) {
       wallets.map((w) =>
         h(
           'li',
-          { class: `row${w.total === 0 ? ' is-quiet' : ''}` },
+          { class: `row${w.total === 0 ? ' is-quiet' : ''}`, 'data-key': `rw:${w.id}` },
           h(
             'span',
             { class: 'row-main' },
@@ -186,20 +186,13 @@ function historyCard(data) {
   if (!data.savings.length) return null;
   const entries = [...data.savings].sort((a, b) => b.periodStart.localeCompare(a.periodStart));
   const total = entries.reduce((sum, e) => sum + e.amount, 0);
-  return card(
-    'Riwayat tabungan',
-    h('p', null, 'Total sisa yang sudah ditabung: ', money(total)),
+  const rows = entries.map((e) =>
     h(
-      'ul',
-      { class: 'rows' },
-      entries.map((e) =>
-        h(
-          'li',
-          { class: 'row' },
-          h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: `Periode mulai ${formatDate(e.periodStart)}` }), h('span', { class: 'row-sub', text: `Dicatat ${formatDate(e.date)}` })),
-          h('span', { class: 'row-amount' }, formatRupiah(e.amount)),
-        ),
-      ),
+      'li',
+      { class: 'row', 'data-key': `s:${e.id}` },
+      h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: `Periode mulai ${formatDate(e.periodStart)}` }), h('span', { class: 'row-sub', text: `Dicatat ${formatDate(e.date)}` })),
+      h('span', { class: 'row-amount' }, formatRupiah(e.amount)),
     ),
   );
+  return keyed(card('Riwayat tabungan', h('p', null, 'Total sisa yang sudah ditabung: ', money(total)), h('ul', { class: 'rows' }, rows)), 'card:history');
 }

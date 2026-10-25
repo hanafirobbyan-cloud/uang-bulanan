@@ -22,7 +22,7 @@ function validData() {
   data.settings.incomeDay = 25;
   data.settings.setupDate = '2026-10-01';
   data.expenses.push({ id: 'e1', amount: 25_000, bucketId: 'kebutuhan', walletId: 'tunai', date: '2026-10-25', note: 'Makan', createdAt: 1 });
-  data.recurring.push({ id: 'r1', name: 'Kos', amount: 1_000_000, bucketId: 'kebutuhan', walletId: 'bank', startDate: '2026-10-01', endDate: null });
+  data.recurring.push({ id: 'r1', name: 'Kos', amount: 1_000_000, bucketId: 'kebutuhan', walletId: 'bank', startDate: '2026-10-01', endDate: null, dueDay: 5 });
   data.incomeOverrides['2026-09-25'] = 3_500_000;
   data.savings.push({ id: 's1', periodStart: '2026-09-25', amount: 100_000, date: '2026-10-25' });
   return data;

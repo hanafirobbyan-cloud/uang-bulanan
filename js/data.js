@@ -5,12 +5,19 @@
 //
 // Every check function returns an Indonesian error message, or '' when the
 // value is fine.
+//
+// Data versions ("schemaVersion"):
+//   1 – the first app version (old data may not have the number at all)
+//   2 – adds "Rencana Cukup" plans (data.plans) and an optional due day on
+//       recurring bills (recurring[].dueDay)
+// When the shape changes again: bump SCHEMA_VERSION, add a step to migrate(),
+// and add tests to tests/migration.test.js.
 // -----------------------------------------------------------------------------
 
-import { isValidDateStr, percentTotal } from './logic.js';
+import { isValidDateStr, percentTotal, daysBetween } from './logic.js';
 
 export const APP_ID = 'uang-bulanan';
-export const SCHEMA_VERSION = 1; // bump this (and add a migration below) if the data shape changes
+export const SCHEMA_VERSION = 2; // bump this (and add a step to migrate()) if the data shape changes
 export const MAX_AMOUNT = 1_000_000_000; // Rp 1 miliar: the biggest amount accepted anywhere
 export const MAX_NAME_LENGTH = 30;
 export const MAX_NOTE_LENGTH = 100;
@@ -51,6 +58,7 @@ export function createEmptyData() {
     recurring: [],
     incomeOverrides: {},
     savings: [],
+    plans: { active: null, history: [] }, // "Rencana Cukup": one active plan + finished ones
   };
 }
 
@@ -128,6 +136,101 @@ const isWhole = (value, min, max) => Number.isInteger(value) && value >= min && 
 const asList = (value) => (Array.isArray(value) ? value : []);
 const validDateOrNull = (value) => (typeof value === 'string' && !checkDate(value) ? value : null);
 
+/* ------------------------------- versions ------------------------------- */
+
+/** Which version of the data shape this is. Old data without a number is version 1. */
+export function dataVersion(input) {
+  return isObject(input) && Number.isInteger(input.schemaVersion) && input.schemaVersion > 0 ? input.schemaVersion : 1;
+}
+
+/**
+ * Upgrade saved data (or the data inside a backup file) from an older shape to
+ * the current one, one version at a time. It never changes the object it gets;
+ * it returns a new one. Anything else that is wrong is fixed by normalizeData().
+ */
+export function migrate(input) {
+  if (!isObject(input)) return input;
+  const data = { ...input };
+  let version = dataVersion(input);
+  if (version < 2) {
+    // Version 1 -> 2: add "Rencana Cukup" plans, and an empty due day on recurring bills.
+    data.plans = { active: null, history: [] };
+    data.recurring = asList(input.recurring).map((bill) => (isObject(bill) ? { ...bill, dueDay: null } : bill));
+    version = 2;
+  }
+  // A future version 3 would continue here: if (version < 3) { ...; version = 3; }
+  data.schemaVersion = version;
+  return data;
+}
+
+const PLAN_PATTERNS = ['even', 'weekend'];
+const PLAN_END_MODES = ['income', 'month', 'custom'];
+
+/** Repair one stored plan. Returns { plan, droppedObligations } or null if it can't be used. */
+function normalizePlan(p) {
+  if (!isObject(p) || typeof p.id !== 'string' || !p.id) return null;
+  if (checkDate(p.startDate) || checkDate(p.endDate) || p.endDate < p.startDate) return null;
+  if (daysBetween(p.startDate, p.endDate) >= 366) return null; // longer than a year
+  if (!isWhole(p.money, 0, MAX_AMOUNT)) return null;
+  let droppedObligations = 0;
+  const obligations = [];
+  const ids = new Set();
+  for (const o of asList(p.obligations)) {
+    if (!isObject(o) || checkName(o.name) || checkAmount(o.amount) || checkDate(o.date)) {
+      droppedObligations++;
+      continue;
+    }
+    let id = typeof o.id === 'string' && o.id && !ids.has(o.id) ? o.id : '';
+    for (let n = ids.size + 1; !id; n++) if (!ids.has(`o-fix-${n}`)) id = `o-fix-${n}`;
+    ids.add(id);
+    obligations.push({
+      id,
+      name: cleanName(o.name),
+      amount: o.amount,
+      date: o.date,
+      paid: o.paid === true,
+      fromRecurringId: typeof o.fromRecurringId === 'string' && o.fromRecurringId ? o.fromRecurringId : null,
+    });
+  }
+  const plan = {
+    id: p.id,
+    startDate: p.startDate,
+    endDate: p.endDate,
+    endMode: PLAN_END_MODES.includes(p.endMode) ? p.endMode : 'custom',
+    money: p.money,
+    obligations,
+    emergency: isWhole(p.emergency, 0, MAX_AMOUNT) ? p.emergency : 0,
+    minDaily: isWhole(p.minDaily, 0, MAX_AMOUNT) ? p.minDaily : 0,
+    pattern: PLAN_PATTERNS.includes(p.pattern) ? p.pattern : 'even',
+    weekendWeight: isWhole(p.weekendWeight, 100, 300) && p.weekendWeight % 25 === 0 ? p.weekendWeight : 150,
+    baselineIds: asList(p.baselineIds).filter((id) => typeof id === 'string'),
+    createdOn: validDateOrNull(p.createdOn) || p.startDate,
+  };
+  return { plan, droppedObligations };
+}
+
+/** Repair one finished plan in the history. Returns the entry or null. */
+function normalizePlanHistory(e) {
+  if (!isObject(e) || typeof e.id !== 'string' || !e.id) return null;
+  if (checkDate(e.startDate) || checkDate(e.endDate) || checkDate(e.endedOn)) return null;
+  const numbers = ['days', 'money', 'obligationsTotal', 'emergency', 'spendable', 'spent', 'leftover'];
+  if (!numbers.every((key) => Number.isSafeInteger(e[key]))) return null;
+  return {
+    id: e.id,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    endedOn: e.endedOn,
+    endedEarly: e.endedEarly === true,
+    days: e.days,
+    money: e.money,
+    obligationsTotal: e.obligationsTotal,
+    emergency: e.emergency,
+    spendable: e.spendable,
+    spent: e.spent,
+    leftover: e.leftover,
+  };
+}
+
 /**
  * Check data from storage or a backup file and repair what is broken.
  * Never throws. Returns { data, problems }, where `problems` is a list of
@@ -141,8 +244,7 @@ export function normalizeData(input) {
     return { data, problems };
   }
 
-  // Future data versions would be converted here, e.g.:
-  // if (input.schemaVersion === 1) input = migrateV1toV2(input);
+  input = migrate(input); // older data shapes are upgraded first
 
   data.setupDone = input.setupDone === true;
 
@@ -242,6 +344,7 @@ export function normalizeData(input) {
       walletId: fixWallet(r.walletId),
       startDate: validDateOrNull(r.startDate) || `${MIN_YEAR}-01-01`,
       endDate: validDateOrNull(r.endDate),
+      dueDay: isWhole(r.dueDay, 1, 31) ? r.dueDay : null, // optional: day of the month the bill is due
     });
   }
   if (badRecurring) problems.push(`${badRecurring} pengeluaran rutin tidak valid dilewati.`);
@@ -267,6 +370,25 @@ export function normalizeData(input) {
     data.savings.push({ id: uniqueId(s.id, 's'), periodStart: s.periodStart, amount: s.amount, date: s.date });
   }
   if (badSavings) problems.push(`${badSavings} catatan tabungan tidak valid dilewati.`);
+
+  // --- "Rencana Cukup" plans ---
+  const plans = isObject(input.plans) ? input.plans : {};
+  if (plans.active !== null && plans.active !== undefined) {
+    const repaired = normalizePlan(plans.active);
+    if (repaired) {
+      data.plans.active = repaired.plan;
+      if (repaired.droppedObligations) problems.push(`${repaired.droppedObligations} kewajiban di Rencana Cukup tidak valid dilewati.`);
+    } else {
+      problems.push('Rencana Cukup yang aktif rusak, jadi dihapus. Buat rencana baru kalau perlu.');
+    }
+  }
+  let badHistory = 0;
+  for (const entry of asList(plans.history)) {
+    const repaired = normalizePlanHistory(entry);
+    if (repaired) data.plans.history.push(repaired);
+    else badHistory++;
+  }
+  if (badHistory) problems.push(`${badHistory} riwayat Rencana Cukup tidak valid dilewati.`);
 
   // --- remembered choices (only if they still exist) ---
   data.settings.lastBucketId = bucketIds.has(settings.lastBucketId) ? settings.lastBucketId : null;
@@ -298,9 +420,10 @@ export function readBackup(text) {
   if (!isObject(parsed) || parsed.app !== APP_ID || !isObject(parsed.data)) {
     return { ok: false, error: 'File ini bukan cadangan Uang Bulanan.' };
   }
-  if (Number.isInteger(parsed.schemaVersion) && parsed.schemaVersion > SCHEMA_VERSION) {
+  if ((Number.isInteger(parsed.schemaVersion) && parsed.schemaVersion > SCHEMA_VERSION) || dataVersion(parsed.data) > SCHEMA_VERSION) {
     return { ok: false, error: 'Cadangan ini dibuat oleh versi aplikasi yang lebih baru. Perbarui aplikasi dulu, lalu coba lagi.' };
   }
+  // Older backups (version 1) are upgraded automatically by normalizeData() -> migrate().
   const { data, problems } = normalizeData(parsed.data);
   return { ok: true, data, problems, exportedAt: typeof parsed.exportedAt === 'string' ? parsed.exportedAt : '' };
 }

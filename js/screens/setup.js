@@ -6,6 +6,7 @@ import { DEFAULT_BUCKETS, DEFAULT_WALLETS } from '../data.js';
 import { getPeriod, daysBetween } from '../logic.js';
 import { formatPeriod } from '../format.js';
 import { chooseBackupFile } from '../backup.js';
+import { shake } from '../motion.js';
 import { isIOS, isStandalone } from '../pwa.js';
 import * as store from '../store.js';
 
@@ -95,6 +96,8 @@ export function render(main, ctx) {
       error.textContent = errorMessage(err);
       error.hidden = false;
       error.scrollIntoView({ block: 'center' });
+      const fields = { income: income.element, incomeDay: daySelect, remaining: remaining.element, buckets: editor.element };
+      shake(fields[err && err.field] || error);
     }
   });
 

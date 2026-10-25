@@ -1,7 +1,8 @@
 // Dompet: wallet tags (Tunai, Bank, GoPay, ...), spending per wallet, add / rename / delete.
 
 import { append, h, icon, openDialog, confirmDialog, alertDialog, toast, errorMessage, uniqueId } from '../ui.js';
-import { screenHeader, card, periodControls } from '../components.js';
+import { screenHeader, card, periodControls, keyed } from '../components.js';
+import { shake } from '../motion.js';
 import { periodSummary } from '../logic.js';
 import { checkName, MAX_NAME_LENGTH } from '../data.js';
 import { formatRupiah } from '../format.js';
@@ -31,39 +32,35 @@ export function render(main, ctx) {
     } catch (err) {
       error.textContent = errorMessage(err);
       error.hidden = false;
+      shake(nameInput);
     }
   });
 
   append(
     main,
-    screenHeader('Dompet', 'Tandai dari mana uangmu keluar.'),
-    picker,
-    card(
-      'Pengeluaran per dompet',
-      h(
-        'ul',
-        { class: 'rows' },
-        summary.wallets.map((w) =>
-          h(
-            'li',
-            { class: 'row wallet-row' },
-            h(
-              'span',
-              { class: 'row-main' },
-              h('span', { class: 'row-title', text: w.name }),
-              h('span', { class: 'row-sub', text: `${formatRupiah(w.total)} · ${w.count} catatan${w.recurring ? ` · termasuk rutin ${formatRupiah(w.recurring)}` : ''}` }),
-            ),
-            h(
-              'span',
-              { class: 'row-actions' },
-              h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Ubah nama ${w.name}`, onclick: () => renameWallet(w) }, icon('pencil')),
-              h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Hapus ${w.name}`, onclick: () => deleteWallet(w) }, icon('trash')),
-            ),
-          ),
-        ),
-      ),
+    keyed(screenHeader('Dompet', 'Tandai dari mana uangmu keluar.'), 'header'),
+    keyed(picker, 'picker'),
+    keyed(card('Pengeluaran per dompet', h('ul', { class: 'rows' }, summary.wallets.map(walletRow))), 'card:wallets'),
+    keyed(card(null, addForm), 'card:add'),
+  );
+}
+
+function walletRow(w) {
+  return h(
+    'li',
+    { class: 'row wallet-row', 'data-key': `w:${w.id}` },
+    h(
+      'span',
+      { class: 'row-main' },
+      h('span', { class: 'row-title', text: w.name }),
+      h('span', { class: 'row-sub', text: `${formatRupiah(w.total)} · ${w.count} catatan${w.recurring ? ` · termasuk rutin ${formatRupiah(w.recurring)}` : ''}` }),
     ),
-    card(null, addForm),
+    h(
+      'span',
+      { class: 'row-actions' },
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Ubah nama ${w.name}`, onclick: () => renameWallet(w) }, icon('pencil')),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': `Hapus ${w.name}`, onclick: () => deleteWallet(w) }, icon('trash')),
+    ),
   );
 }
 

@@ -2,7 +2,8 @@
 // backup (export / import), app version and "Hapus semua data".
 
 import { append, h, icon, moneyInput, toast, errorMessage, field, confirmDialog, openDialog } from '../ui.js';
-import { screenHeader, card, notice } from '../components.js';
+import { screenHeader, card, notice, keyed } from '../components.js';
+import { shake } from '../motion.js';
 import { getPeriod } from '../logic.js';
 import { formatRupiah, formatDate, formatPeriod } from '../format.js';
 import { exportBackup, chooseBackupFile } from '../backup.js';
@@ -15,36 +16,36 @@ export const title = 'Pengaturan';
 
 export function render(main, ctx) {
   const { data } = ctx;
+  const active = data.recurring.filter((r) => !r.endDate);
+  const inactive = data.recurring.length - active.length;
+  let recurringText = 'Belum ada';
+  if (active.length) recurringText = `${active.length} aktif · ${formatRupiah(active.reduce((s, r) => s + r.amount, 0))} per periode`;
+  else if (inactive) recurringText = `Tidak ada yang aktif (${inactive} nonaktif)`;
+
+  const manage = card(
+    'Kelola',
+    h(
+      'ul',
+      { class: 'rows' },
+      linkRow('#/pos', 'Pos anggaran', data.buckets.map((b) => `${b.name} ${b.percent}%`).join(' · ')),
+      linkRow('#/dompet', 'Dompet', `${data.wallets.length} dompet`),
+      linkRow('#/rutin', 'Pengeluaran rutin', recurringText),
+    ),
+  );
+  const danger = card(
+    'Hapus data',
+    h('p', { class: 'muted' }, 'Menghapus semua data aplikasi ini dari perangkat ini. Tidak bisa dibatalkan.'),
+    h('button', { type: 'button', class: 'btn btn-danger btn-block', onclick: () => deleteEverything(ctx) }, icon('trash'), 'Hapus semua data'),
+  );
+
   append(
     main,
-    screenHeader('Pengaturan'),
-    incomeCard(ctx),
-    card(
-      'Kelola',
-      h(
-        'ul',
-        { class: 'rows' },
-        linkRow('#/pos', 'Pos anggaran', data.buckets.map((b) => `${b.name} ${b.percent}%`).join(' · ')),
-        linkRow('#/dompet', 'Dompet', `${data.wallets.length} dompet`),
-        linkRow(
-          '#/rutin',
-          'Pengeluaran rutin',
-          (() => {
-            const active = data.recurring.filter((r) => !r.endDate);
-            const inactive = data.recurring.length - active.length;
-            if (active.length) return `${active.length} aktif · ${formatRupiah(active.reduce((s, r) => s + r.amount, 0))} per periode`;
-            return inactive ? `Tidak ada yang aktif (${inactive} nonaktif)` : 'Belum ada';
-          })(),
-        ),
-      ),
-    ),
-    backupCard(ctx),
-    aboutCard(),
-    card(
-      'Hapus data',
-      h('p', { class: 'muted' }, 'Menghapus semua data aplikasi ini dari perangkat ini. Tidak bisa dibatalkan.'),
-      h('button', { type: 'button', class: 'btn btn-danger btn-block', onclick: () => deleteEverything(ctx) }, icon('trash'), 'Hapus semua data'),
-    ),
+    keyed(screenHeader('Pengaturan'), 'header'),
+    keyed(incomeCard(ctx), 'card:income'),
+    keyed(manage, 'card:manage'),
+    keyed(backupCard(ctx), 'card:backup'),
+    keyed(aboutCard(), 'card:about'),
+    keyed(danger, 'card:danger'),
   );
 }
 
@@ -89,6 +90,7 @@ function incomeCard(ctx) {
     } catch (err) {
       error.textContent = errorMessage(err);
       error.hidden = false;
+      shake({ income: income.element, incomeDay: daySelect }[err && err.field] || error);
     }
   });
   return card('Uang bulanan', form);
@@ -106,6 +108,39 @@ function backupCard(ctx) {
       h('button', { type: 'button', class: 'btn btn-primary', id: 'ekspor-btn', onclick: () => exportBackup(ctx.today) }, icon('download'), 'Ekspor cadangan'),
       h('button', { type: 'button', class: 'btn', id: 'impor-btn', onclick: () => chooseBackupFile({ onRestored: () => ctx.go('beranda') }) }, icon('upload'), 'Impor cadangan'),
     ),
+    preUpdateSection(ctx),
+  );
+}
+
+/** "Pulihkan data sebelum update": only shown when a copy from before an app upgrade exists. */
+function preUpdateSection(ctx) {
+  const info = store.preUpdateInfo();
+  if (!info) return null;
+  const when = info.savedOn ? formatDate(info.savedOn) : 'sebelum update';
+  const restore = async () => {
+    const ok = await confirmDialog({
+      title: 'Pulihkan data sebelum update?',
+      message: [
+        `Data sekarang akan diganti dengan salinan yang disimpan otomatis pada ${when}, sebelum aplikasi diperbarui.`,
+        'Semua perubahan setelah tanggal itu akan hilang. Sebaiknya ekspor cadangan dulu.',
+      ],
+      confirmLabel: 'Pulihkan',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      store.restorePreUpdate();
+      toast('Data sebelum update sudah dipulihkan.', 'success');
+      ctx.go('beranda');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+  return h(
+    'div',
+    { class: 'pre-update' },
+    h('p', { class: 'hint' }, `Salinan data sebelum aplikasi diperbarui (${when}) disimpan otomatis. Pakai hanya kalau ada data yang hilang setelah update.`),
+    h('button', { type: 'button', class: 'btn btn-small', id: 'restore-pre-update', onclick: restore }, 'Pulihkan data sebelum update'),
   );
 }
 

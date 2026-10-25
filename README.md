@@ -26,6 +26,14 @@ their parents every month. It answers one question every day:
 - **Pengaturan**: monthly amount, income day, buckets, wallets, backup export/import,
   and *Hapus semua data*.
 - **Special income for one period**, e.g. when your parents send extra this month.
+- **Rencana Cukup** (new in 2.0): "I have this much money now; make it last until …".
+  Set aside obligations (kos, pulsa — or take them from your recurring bills) and an
+  emergency amount; get a daily allowance (even, or more on weekends) that adapts every
+  day to what you actually spend, a day-by-day timeline, a "Kalau aku belanja Rp X per
+  hari…" calculator, "Kalau beli ini", saving tips from your own data, and a history.
+- **Smooth, iPhone-like motion** (new in 2.0): page transitions, sheets that slide up and
+  can be dragged down, swipe left on an expense to delete (with undo), numbers that count,
+  bars that fill. With "Reduce Motion" turned on, everything becomes simple fades.
 
 ## How the daily number works
 
@@ -72,6 +80,14 @@ spendable (Tabungan, Dana Cadangan) never change the daily number.
 5. **Find your link**: wait 1–2 minutes and refresh the *Pages* settings page. It shows
    *"Your site is live at https://YOUR-USERNAME.github.io/uang-bulanan/"*.
 
+## Data versions and safe updates
+
+Saved data has a version number (`schemaVersion`, currently 2). When a new app version
+changes the data shape, it first stores an untouched copy of the old data (offered as
+*Pengaturan → Pulihkan data sebelum update*) and then upgrades it step by step
+(`migrate()` in `js/data.js`, tested in `tests/migration.test.js`). Old backup files keep
+importing correctly.
+
 ## Releasing an update
 
 1. Make the change.
@@ -95,12 +111,14 @@ sw.js                 service worker: offline cache + updates
 css/app.css           all styles (dark mode, iPhone safe areas)
 js/app.js             start-up, screen switching
 js/logic.js           ALL money/date math (pure, no DOM) – tested
-js/data.js            data shape, defaults, checks, repair, backups – tested
+js/planner.js         ALL "Rencana Cukup" math (pure, no DOM) – tested
+js/motion.js          all animations (one place; timings come from css/app.css)
+js/data.js            data shape, versions/migration, checks, repair, backups – tested
 js/format.js          Indonesian money/date text – tested
 js/storage.js         the only file that touches localStorage
 js/store.js           in-memory data + every change function
 js/ui.js, components.js   small UI helpers
-js/screens/*.js       one file per screen
+js/screens/*.js       one file per screen (rencana.js + plan-form.js: Rencana Cukup)
 tests/                unit tests (node --test)
 tools/make-icons.mjs  draws the PNG icons (npm run icons)
 ```

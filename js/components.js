@@ -4,9 +4,20 @@
 // bucket ("pos") editor.
 // -----------------------------------------------------------------------------
 
-import { h, icon, uniqueId, openDialog, alertDialog } from './ui.js';
+import { h, icon, uniqueId, openDialog, alertDialog, makeSwipeable } from './ui.js';
 import { formatRupiah, formatPeriod } from './format.js';
 import { getPeriod, previousPeriod, nextPeriod, percentTotal } from './logic.js';
+import { barTransform } from './motion.js';
+
+/**
+ * Give an element a stable key (data-key). When a screen is redrawn after a
+ * change, keyed elements slide to their new place, new ones fade in and removed
+ * ones fade out (see motion.js playLayout). Keys must be unique on a screen.
+ */
+export function keyed(el, key) {
+  el.dataset.key = key;
+  return el;
+}
 
 /** Title (and optional subtitle and buttons) at the top of a screen. */
 export function screenHeader(title, subtitle = null, actions = null) {
@@ -23,9 +34,26 @@ export function card(title, ...children) {
   return h('section', { class: 'card' }, title ? h('h2', { class: 'card-title', text: title }) : null, children);
 }
 
-/** An amount in Rupiah; negative amounts are shown in red. */
-export function money(amount, className = '') {
-  return h('span', { class: `money${amount < 0 ? ' is-negative' : ''}${className ? ` ${className}` : ''}` }, formatRupiah(amount));
+/**
+ * An amount in Rupiah; negative amounts are shown in red.
+ * With a countKey, the amount counts smoothly from its last shown value when it changes.
+ */
+export function money(amount, className = '', countKey = null) {
+  return h(
+    'span',
+    {
+      class: `money${amount < 0 ? ' is-negative' : ''}${className ? ` ${className}` : ''}`,
+      'data-count-key': countKey,
+      'data-value': countKey ? String(amount) : null,
+    },
+    formatRupiah(amount),
+  );
+}
+
+/** Plan status as a colored pill: 'aman' → Aman, 'waspada' → Waspada, 'tidak-cukup' → Tidak cukup. */
+export function statusBadge(status) {
+  const labels = { aman: 'Aman', waspada: 'Waspada', 'tidak-cukup': 'Tidak cukup' };
+  return h('span', { class: `status-badge status-${status}` }, labels[status] || status);
 }
 
 /** A friendly message for empty lists, with an optional button. */
@@ -39,29 +67,48 @@ export function notice(kind, content, action = null) {
   return h('div', { class: `notice notice-${kind}`, role: kind === 'danger' ? 'alert' : null }, icon(iconName), h('div', { class: 'notice-text' }, content), action);
 }
 
-/** Progress bar for "used out of allocation". Turns orange near the limit and red when over. */
-export function progressBar(used, allocation, label) {
+/** How full a meter is (0..2) and its color state: '' (fine), 'is-warning' (90%+), 'is-over' (over). */
+function meterState(used, allocation) {
   let ratio = 0;
   if (allocation > 0) ratio = used / allocation;
   else if (used > 0) ratio = 2; // nothing allocated but something used: over budget
-  const width = Math.max(0, Math.min(100, Math.round(ratio * 100)));
-  const state = ratio > 1 ? ' is-over' : ratio >= 0.9 ? ' is-warning' : '';
-  return h('div', { class: 'bar', role: 'img', 'aria-label': label }, h('div', { class: `bar-fill${state}`, style: `width: ${width}%` }));
+  return { ratio: Math.max(0, ratio), state: ratio > 1 ? 'is-over' : ratio >= 0.9 ? 'is-warning' : '' };
+}
+
+/**
+ * Progress bar for "used out of allocation". Turns orange near the limit and
+ * red when over. With a `key`, it fills smoothly on open and on change.
+ */
+export function progressBar(used, allocation, label, key = null) {
+  const { ratio, state } = meterState(used, allocation);
+  const fill = h('div', { class: `bar-fill${state ? ` ${state}` : ''}`, style: `transform: ${barTransform(ratio)}` });
+  return h('div', { class: 'bar', role: 'img', 'aria-label': label, 'data-bar-key': key, 'data-ratio': String(Math.min(1, ratio)), 'data-state': state }, fill);
+}
+
+/** A small round progress ring (e.g. "spent today out of today's allowance"). */
+export function ring(used, allocation, label, key = null) {
+  const { ratio, state } = meterState(used, allocation);
+  const radius = 20;
+  const length = (2 * Math.PI * radius).toFixed(2);
+  const shown = Math.min(1, ratio);
+  const el = h('div', { class: `ring${state ? ` ${state}` : ''}`, role: 'img', 'aria-label': label, 'data-ring-key': key, 'data-ratio': String(shown), 'data-state': state });
+  el.innerHTML = `<svg viewBox="0 0 48 48" focusable="false" aria-hidden="true"><circle class="ring-track" cx="24" cy="24" r="${radius}"/><circle class="ring-fill" cx="24" cy="24" r="${radius}" stroke-dasharray="${length}" stroke-dashoffset="${(length * (1 - shown)).toFixed(2)}"/></svg>`;
+  return el;
 }
 
 /** One bucket with its progress bar and numbers (used on Beranda and Ringkasan). */
-export function bucketStatus(report) {
+export function bucketStatus(report, keyPrefix = 'b') {
   const over = report.remaining < 0;
   return h(
     'li',
-    { class: 'bucket-item' },
+    { class: 'bucket-item', 'data-key': `${keyPrefix}:${report.id}` },
     h(
       'div',
       { class: 'bucket-head' },
       h('span', { class: 'bucket-name', text: report.name }),
       h('span', { class: `tag${report.spendable ? '' : ' tag-muted'}`, text: report.spendable ? 'Bisa dipakai' : 'Disimpan' }),
     ),
-    progressBar(report.used, report.allocation, `${report.name}: terpakai ${formatRupiah(report.used)} dari ${formatRupiah(report.allocation)}`),
+    progressBar(report.used, report.allocation, `${report.name}: terpakai ${formatRupiah(report.used)} dari ${formatRupiah(report.allocation)}`, `${keyPrefix}:${report.id}`),
     h(
       'div',
       { class: 'bucket-numbers' },
@@ -72,26 +119,42 @@ export function bucketStatus(report) {
   );
 }
 
-/** A tappable row for one expense. */
-export function expenseRow(expense, data, onOpen) {
+/**
+ * A tappable row for one expense (tap = edit). With onDelete, the row can be
+ * swiped left to reveal "Hapus" (the edit form also has a delete button, for
+ * desktop and accessibility).
+ */
+export function expenseRow(expense, data, onOpen, onDelete = null) {
   const bucket = data.buckets.find((b) => b.id === expense.bucketId);
   const wallet = data.wallets.find((w) => w.id === expense.walletId);
   const bucketName = bucket ? bucket.name : 'Tanpa pos';
-  return h(
-    'li',
-    null,
+  const title = expense.note || bucketName;
+  const content = h(
+    'button',
+    { type: 'button', class: `row row-button${onDelete ? ' swipe-content' : ''}`, onclick: () => onOpen(expense) },
     h(
-      'button',
-      { type: 'button', class: 'row row-button', onclick: () => onOpen(expense) },
-      h(
-        'span',
-        { class: 'row-main' },
-        h('span', { class: 'row-title', text: expense.note || bucketName }),
-        h('span', { class: 'row-sub', text: `${expense.note ? `${bucketName} · ` : ''}${wallet ? wallet.name : 'Tanpa dompet'}` }),
-      ),
-      h('span', { class: 'row-amount', text: formatRupiah(expense.amount) }),
+      'span',
+      { class: 'row-main' },
+      h('span', { class: 'row-title', text: title }),
+      h('span', { class: 'row-sub', text: `${expense.note ? `${bucketName} · ` : ''}${wallet ? wallet.name : 'Tanpa dompet'}` }),
     ),
+    h('span', { class: 'row-amount', text: formatRupiah(expense.amount) }),
   );
+  if (!onDelete) return h('li', { 'data-key': `e:${expense.id}` }, content);
+
+  const action = h(
+    'button',
+    { type: 'button', class: 'swipe-action', 'aria-label': `Hapus pengeluaran ${title} ${formatRupiah(expense.amount)}` },
+    icon('trash'),
+    h('span', null, 'Hapus'),
+  );
+  const row = h('li', { class: 'swipe-row', 'data-key': `e:${expense.id}` }, action, content);
+  makeSwipeable(row, content);
+  action.addEventListener('click', () => {
+    row.classList.add('is-removing'); // the row slides away as it disappears
+    onDelete(expense);
+  });
+  return row;
 }
 
 /** Sort helper: newest date first, then the most recently entered first. */
@@ -117,8 +180,9 @@ export function periodControls(ctx) {
   const isCurrent = period.start === current.start;
 
   const show = (p) => {
+    const direction = p.start < period.start ? 'back' : 'forward';
     ui.periodStart = p.start === current.start ? null : p.start;
-    ctx.refresh();
+    ctx.refresh({ slide: direction }); // the list slides in from the side you are moving to
   };
 
   const element = h(

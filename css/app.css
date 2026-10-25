@@ -26,10 +26,46 @@
   --info: #1d5fa8;
   --info-soft: #e7f0fa;
   --track: #e3e9e6;
+  --grabber: rgb(0 0 0 / 18%);
+  --bar-bg: rgb(244 246 245 / 80%);
+  --seg-thumb: #ffffff;
   --shadow: 0 1px 2px rgb(16 32 28 / 6%), 0 2px 8px rgb(16 32 28 / 4%);
   --radius: 16px;
   --tabbar-height: 60px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* ---- Motion: one place to tune how everything moves (js/motion.js reads these too) ---- */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1); /* iOS-like: quick start, soft landing */
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0); /* for things that leave */
+  --ease-spring: cubic-bezier(0.34, 1.2, 0.64, 1); /* fallback; a real spring is set below */
+  --ease-bounce: cubic-bezier(0.34, 1.5, 0.64, 1); /* fallback; a real spring is set below */
+  --dur-press: 90ms; /* finger down */
+  --dur-fast: 160ms; /* small feedback */
+  --dur-base: 240ms; /* most changes */
+  --dur-page: 320ms; /* pages and lists */
+  --dur-sheet: 480ms; /* sheets sliding up */
+  --dur-slow: 700ms; /* bars filling, glows */
+}
+
+/* Real spring curves (a damped spring sampled into points) where the browser supports linear(). */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    /* ~3% overshoot: sheets, toggles, the tab highlight */
+    --ease-spring: linear(0, 0.0655, 0.2131, 0.3885, 0.5584, 0.7051, 0.8214, 0.907, 0.9655, 1.0019, 1.0219, 1.0303, 1.0314, 1.0283, 1.0232, 1.0176, 1.0125, 1.0081, 1.0048, 1.0024, 1.0008, 0.9998, 0.9993, 0.9991, 0.9992, 0.9993, 0.9994, 0.9996, 0.9998, 0.9999, 1);
+    /* ~12% overshoot: button release, small pops */
+    --ease-bounce: linear(0, 0.0649, 0.2202, 0.415, 0.6118, 0.7862, 0.9249, 1.0237, 1.0847, 1.114, 1.1191, 1.108, 1.0877, 1.064, 1.0409, 1.021, 1.0056, 0.995, 0.9887, 0.986, 0.9859, 0.9876, 0.9902, 0.9931, 0.9957, 0.998, 0.9997, 1.0008, 1.0015, 1.0017, 1.0017, 1.0014, 1.0011, 1.0008, 1.0004, 1.0002, 1);
+  }
+}
+
+/* "Reduce Motion": no springs, short simple fades. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ease-spring: ease-out;
+    --ease-bounce: ease-out;
+    --dur-page: 160ms;
+    --dur-sheet: 160ms;
+    --dur-slow: 160ms;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -54,6 +90,9 @@
     --info: #8fbdf3;
     --info-soft: rgb(143 189 243 / 13%);
     --track: #29312f;
+    --grabber: rgb(255 255 255 / 24%);
+    --bar-bg: rgb(14 18 17 / 80%);
+    --seg-thumb: #39423f;
     --shadow: none;
   }
 }
@@ -261,6 +300,36 @@ body[data-route="setup"] .nav,
   display: none;
 }
 
+/* The soft highlight that glides to the selected tab (positioned by js/motion.js). */
+.nav-indicator {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  border-radius: 16px;
+  background: var(--primary-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dur-sheet) var(--ease-spring),
+    opacity var(--dur-fast) ease;
+}
+
+.nav-indicator.is-ready {
+  opacity: 1;
+}
+
+.nav-item {
+  position: relative;
+  z-index: 1;
+}
+
+.nav-item span {
+  transition: color var(--dur-base) ease;
+}
+
 @media (max-width: 350px) {
   .nav-item {
     font-size: 10px;
@@ -319,12 +388,15 @@ body[data-route="setup"] .nav,
   }
 
   .nav-item[aria-current="page"] {
-    background: var(--primary-soft);
     color: var(--primary);
   }
 
   .nav-item.is-parent {
     color: var(--muted);
+  }
+
+  .nav-indicator {
+    border-radius: 10px;
   }
 
   .main {
@@ -339,7 +411,7 @@ body[data-route="setup"] .nav,
   }
 
   .nav-item[aria-current="page"]:hover {
-    background: var(--primary-soft);
+    background: transparent;
     color: var(--primary);
   }
 }
@@ -415,6 +487,9 @@ body[data-route="setup"] .nav,
 /* ------------------------------ home hero ------------------------------ */
 
 .hero {
+  position: relative;
+  isolation: isolate; /* keeps the red glow behind the text */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -425,8 +500,18 @@ body[data-route="setup"] .nav,
   box-shadow: var(--shadow);
 }
 
-.hero.is-negative {
+/* The soft red glow when over budget; js/motion.js fades it in and out. */
+.hero-tint {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: linear-gradient(180deg, var(--danger-soft), var(--surface) 75%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hero-tint.is-on {
+  opacity: 1;
 }
 
 .hero-label {
@@ -546,14 +631,63 @@ body[data-route="setup"] .nav,
   user-select: none;
 }
 
-.btn:active {
-  transform: translateY(1px);
-}
-
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+}
+
+/* ---- Press feedback: instant shrink + dim on touch, springy release ---- */
+.btn,
+.icon-btn,
+.link-btn,
+.chip span,
+.row-button,
+.plan-card,
+.stepper button,
+.nav-item svg {
+  transition:
+    transform var(--dur-base) var(--ease-bounce),
+    opacity var(--dur-fast) ease,
+    background-color var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease;
+}
+
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.link-btn:active,
+.chip:active span,
+.plan-card:active,
+.stepper button:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.82;
+  transition-duration: var(--dur-press);
+  transition-timing-function: ease-out;
+}
+
+.row-button:active {
+  background-color: var(--surface-2);
+  transition-duration: var(--dur-press);
+}
+
+.nav-item:active svg {
+  transform: scale(0.88);
+  transition-duration: var(--dur-press);
+  transition-timing-function: ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn:active:not(:disabled),
+  .icon-btn:active:not(:disabled),
+  .link-btn:active,
+  .chip:active span,
+  .plan-card:active,
+  .stepper button:active:not(:disabled),
+  .nav-item:active svg {
+    transform: none;
+  }
 }
 
 .btn .icon {
@@ -718,11 +852,28 @@ legend.field-label {
   font-size: 17px;
 }
 
+.input,
+.money-field {
+  transition:
+    border-color var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease;
+}
+
 .input:focus,
 .money-field:focus-within {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.input::placeholder,
+.money-input::placeholder {
+  transition: opacity var(--dur-fast) ease;
+}
+
+.input:focus::placeholder,
+.money-input:focus::placeholder {
+  opacity: 0.5;
 }
 
 select.input {
@@ -871,7 +1022,7 @@ input[type="date"]::-webkit-date-and-time-value {
   border-radius: 999px;
   background: var(--track);
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color var(--dur-base) ease;
 }
 
 .switch::after {
@@ -884,7 +1035,7 @@ input[type="date"]::-webkit-date-and-time-value {
   border-radius: 50%;
   background: #ffffff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
-  transition: transform 0.15s;
+  transition: transform var(--dur-page) var(--ease-spring);
 }
 
 .switch:checked {
@@ -1092,10 +1243,15 @@ input[type="date"]::-webkit-date-and-time-value {
   background: var(--track);
 }
 
+/* The fill is always full width and slides in from the left (transform only),
+   so its round end stays round. js/motion.js animates it. */
 .bar-fill {
+  width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--primary);
+  transform: translateX(-100%);
+  transition: background-color var(--dur-slow) ease;
 }
 
 .bar-fill.is-warning {
@@ -1372,15 +1528,58 @@ input[type="date"]::-webkit-date-and-time-value {
 
 /* ------------------------------- dialogs ------------------------------- */
 
-dialog {
+dialog,
+.ghost-panel {
   padding: 0;
   border: 0;
   color: var(--text);
   background: var(--surface);
 }
 
-dialog::backdrop {
-  background: rgb(0 0 0 / 45%);
+/* Dimmed, softly blurred background behind open windows.
+   (Plain values on purpose: some browsers don't let ::backdrop use the color variables.) */
+dialog::backdrop,
+.ghost-backdrop {
+  background: rgb(0 0 0 / 40%);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+}
+
+dialog[open]::backdrop {
+  animation: backdrop-in 280ms ease-out;
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A closing window is swapped for a see-through copy that animates away
+   (js/motion.js), so the real window never blocks a tap. */
+.ghost-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.ghost-layer[popover] {
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+}
+
+.ghost-backdrop {
+  position: absolute;
+  inset: 0;
 }
 
 .dialog {
@@ -1425,38 +1624,72 @@ dialog::backdrop {
   flex: 1 1 auto;
 }
 
-/* Sheets: full screen on phones, a centered window on bigger screens. */
+/* Sheets: slide up from the bottom on phones (drag the top bar down to close),
+   a centered window on bigger screens. */
 .sheet {
   width: 100%;
   max-width: 100%;
-  height: 100%;
-  max-height: 100%;
+  height: calc(100% - 14px - env(safe-area-inset-top));
+  max-height: none;
   margin: 0;
-  border-radius: 0;
+  overflow: visible;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 40px rgb(0 0 0 / 18%);
+}
+
+dialog.sheet {
+  top: auto;
+  bottom: 0;
+}
+
+/* Paint a little below the bottom edge, so the spring's small overshoot never shows a gap. */
+.sheet::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: var(--surface);
 }
 
 .sheet-form {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 .sheet-header {
+  position: relative;
   display: grid;
   flex: none;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 4px;
   padding:
-    calc(6px + env(safe-area-inset-top))
+    16px
     calc(6px + env(safe-area-inset-right))
     6px
     calc(6px + env(safe-area-inset-left));
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  touch-action: none; /* this bar can be dragged down to close the sheet */
 }
 
-.sheet-header > .btn:first-child {
+.sheet-grabber {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 38px;
+  height: 5px;
+  margin-left: -19px;
+  border-radius: 3px;
+  background: var(--grabber);
+}
+
+.sheet-header > .btn:first-of-type {
   justify-self: start;
 }
 
@@ -1505,6 +1738,19 @@ dialog::backdrop {
     box-shadow: 0 24px 70px rgb(0 0 0 / 30%);
   }
 
+  dialog.sheet {
+    top: 0;
+  }
+
+  .sheet::after,
+  .sheet-grabber {
+    display: none;
+  }
+
+  .sheet-header {
+    padding-top: 6px;
+  }
+
   .sheet-form {
     height: auto;
     max-height: calc(100vh - 48px);
@@ -1530,6 +1776,7 @@ dialog::backdrop {
   color: var(--bg);
   font-weight: 600;
   box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
+  animation: toast-in var(--dur-sheet) var(--ease-spring) both;
 }
 
 .update-banner .btn {
@@ -1551,16 +1798,52 @@ dialog::backdrop {
   pointer-events: none;
 }
 
+/* Where supported the toast area is a "popover", so it floats above open windows. */
+.toasts[popover] {
+  inset: auto auto calc(var(--tabbar-height) + env(safe-area-inset-bottom) + 76px) 50%;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: inherit;
+}
+
 .toast {
-  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 12px 16px;
   border-radius: 14px;
   background: var(--text);
   color: var(--bg);
   font-size: 15px;
   font-weight: 600;
   box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
-  animation: toast-in 0.2s ease-out;
-  transition: opacity 0.25s;
+  animation: toast-in var(--dur-sheet) var(--ease-spring) both;
+}
+
+.toast.has-action {
+  pointer-events: auto;
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-action {
+  flex: none;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .toast-error {
@@ -1569,18 +1852,88 @@ dialog::backdrop {
 }
 
 .toast.is-leaving {
-  opacity: 0;
+  animation: toast-out 220ms var(--ease-in) both;
+}
+
+/* The "saved" checkmark: the circle pops in, then the tick draws itself. */
+.toast-check {
+  display: inline-flex;
+  flex: none;
+}
+
+.toast-check circle {
+  fill: var(--success);
+  transform-origin: 12px 12px;
+  animation: check-pop 420ms var(--ease-bounce) both;
+}
+
+.toast-check path {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 16;
+  stroke-dashoffset: 16;
+  animation: check-draw 320ms var(--ease-out) 160ms forwards;
 }
 
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(18px) scale(0.96);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+
+@keyframes check-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .update-banner {
+    animation: fade-in var(--dur-fast) ease both;
   }
 
-  to {
-    opacity: 1;
-    transform: none;
+  .toast.is-leaving {
+    animation: fade-out var(--dur-fast) ease both;
+  }
+
+  .toast-check circle {
+    animation: none;
+  }
+
+  .toast-check path {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 
@@ -1592,16 +1945,812 @@ dialog::backdrop {
     width: 380px;
   }
 
-  .toasts {
+  .toasts,
+  .toasts[popover] {
     bottom: 96px;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
+/* ----------------------------- Rencana Cukup ----------------------------- */
+
+.status-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.status-aman {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-waspada {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.status-tidak-cukup {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Compact card on Beranda */
+.plan-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.plan-card-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plan-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.plan-card-title .icon {
+  width: 20px;
+  height: 20px;
+  color: var(--primary);
+}
+
+.plan-card-amount {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.plan-card-amount .money {
+  font-weight: 800;
+}
+
+.plan-card-sub {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.plan-card .ring {
+  width: 44px;
+  height: 44px;
+}
+
+.plan-card > .icon {
+  color: var(--muted);
+}
+
+/* The plan screen */
+.plan-hero-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plan-hero .ring {
+  width: 60px;
+  height: 60px;
+}
+
+.plan-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.plan-status-text {
+  flex: 1 1 200px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.plan-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.plan-intro-icon {
+  width: 48px;
+  height: 48px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.plan-points {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 15px;
+}
+
+.tips-heading {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.is-under {
+  color: var(--success);
+}
+
+.is-over {
+  color: var(--danger);
+}
+
+.row-amount.is-under,
+.row-amount.is-over {
+  font-size: 14px;
+}
+
+.obligation-item.is-paid .row-title {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.paid-toggle {
+  display: inline-flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.paid-toggle .switch {
+  width: 40px;
+  height: 24px;
+}
+
+.paid-toggle .switch::after {
+  width: 18px;
+  height: 18px;
+}
+
+.paid-toggle .switch:checked::after {
+  transform: translateX(16px);
+}
+
+/* Day by day */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-day {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: 12px;
+}
+
+.timeline-day + .timeline-day {
+  border-top: 1px solid var(--border);
+}
+
+.timeline-day.is-today {
+  border-top-color: transparent;
+  background: var(--primary-soft);
+}
+
+.timeline-day.is-today + .timeline-day {
+  border-top-color: transparent;
+}
+
+.timeline-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
+.timeline-date small {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.timeline-date strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-day.is-today .timeline-date small {
+  color: var(--primary);
+}
+
+.timeline-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.timeline-main .bar {
+  height: 8px;
+}
+
+.bar-quiet {
+  opacity: 0.55;
+}
+
+.timeline-detail {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-day.is-future .timeline-date strong {
+  color: var(--muted);
+}
+
+.calc-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plan-actions .btn {
+  flex: 1 1 140px;
+}
+
+/* The plan form */
+.plan-end-info.is-error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.obligation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.obligation-list:empty {
+  display: none;
+}
+
+.obligation-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.obligation-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obligation-top .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.obligation-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.check-row input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.check-row small {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.weekend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.plan-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--primary-soft);
+}
+
+.plan-preview-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 650;
+}
+
+.plan-preview-amount {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Pulihkan data sebelum update" inside the backup card */
+.pre-update {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------ top bar ------------------------------ */
+/* A small title bar that fades in with a blur once the big title scrolls away (like iOS). */
+
+.topbar {
+  position: fixed;
+  z-index: 15;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(46px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 56px 0;
+  pointer-events: none;
+}
+
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bar-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+  box-shadow:
+    0 0.5px 0 var(--border),
+    0 6px 20px rgb(0 0 0 / 5%);
+  opacity: 0;
+  transition: opacity var(--dur-base) ease;
+}
+
+.topbar-title {
+  position: relative;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity var(--dur-base) ease,
+    transform var(--dur-base) var(--ease-out);
+}
+
+.topbar.is-stuck::before,
+.topbar.is-stuck .topbar-title {
+  opacity: 1;
+  transform: none;
+}
+
+@media (min-width: 900px) {
+  .topbar {
+    left: 240px;
   }
+
+  body[data-route="setup"] .topbar {
+    left: 0;
+  }
+}
+
+/* --------------------------- page transitions --------------------------- */
+/* Uses the browser's View Transitions where available (js/motion.js pageTransition).
+   Only the page content moves; the tab bar and top bar stay put. */
+
+.main {
+  view-transition-name: main-content;
+}
+
+.nav {
+  view-transition-name: tab-bar;
+}
+
+.topbar {
+  view-transition-name: top-bar;
+}
+
+::view-transition {
+  pointer-events: none; /* never block taps while pages change */
+}
+
+::view-transition-old(root),
+::view-transition-old(tab-bar),
+::view-transition-old(top-bar) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(root),
+::view-transition-new(tab-bar),
+::view-transition-new(top-bar),
+::view-transition-group(main-content) {
+  animation: none;
+}
+
+::view-transition-old(main-content) {
+  animation: vt-out-left var(--dur-fast) var(--ease-in) both;
+}
+
+::view-transition-new(main-content) {
+  animation: vt-in-right var(--dur-page) var(--ease-out) both;
+}
+
+html[data-nav-dir="back"]::view-transition-old(main-content) {
+  animation-name: vt-out-right;
+}
+
+html[data-nav-dir="back"]::view-transition-new(main-content) {
+  animation-name: vt-in-left;
+}
+
+@keyframes vt-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+}
+
+@keyframes vt-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
+@keyframes vt-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes vt-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(main-content),
+  html[data-nav-dir="back"]::view-transition-old(main-content) {
+    animation: fade-out var(--dur-fast) ease both;
+  }
+
+  ::view-transition-new(main-content),
+  html[data-nav-dir="back"]::view-transition-new(main-content) {
+    animation: fade-in var(--dur-fast) ease both;
+  }
+}
+
+/* ------------------------------ swipe rows ------------------------------ */
+/* Swipe an expense left to reveal "Hapus" (js/ui.js makeSwipeable). */
+
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.swipe-content {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+  touch-action: pan-y; /* up/down still scrolls the page */
+}
+
+.swipe-action {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  bottom: 2px;
+  width: 88px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--danger);
+  color: var(--on-danger);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) ease;
+}
+
+.swipe-action .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.swipe-row.is-swiping .swipe-action,
+.swipe-row.is-open .swipe-action,
+.swipe-action:focus-visible {
+  opacity: 1;
+}
+
+/* Keyboard users: focusing "Hapus" slides the row open too. */
+.swipe-row:has(.swipe-action:focus-visible) .swipe-content {
+  transform: translateX(-88px);
+}
+
+/* --------------------------- segmented control --------------------------- */
+
+.segmented {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--count), minmax(0, 1fr));
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.segmented-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--count));
+  border-radius: 9px;
+  background: var(--seg-thumb);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 12%),
+    0 0 0 0.5px rgb(0 0 0 / 4%);
+  transform: translateX(calc(var(--index) * 100%));
+  transition: transform var(--dur-page) var(--ease-spring);
+}
+
+.segmented-option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  cursor: pointer;
+}
+
+.segmented-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-option span {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 6px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  transition: color var(--dur-base) ease;
+}
+
+.segmented-option input:checked + span {
+  color: var(--text);
+}
+
+.segmented-option input:focus-visible + span {
+  outline: 3px solid var(--primary);
+  outline-offset: -1px;
+}
+
+/* -------------------------------- stepper -------------------------------- */
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.stepper button {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--seg-thumb);
+  color: var(--text);
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.stepper button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stepper-value {
+  display: inline-block;
+  min-width: 64px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* --------------------------- expanding parts --------------------------- */
+/* Height animates through grid rows (0fr → 1fr), which stays smooth. */
+
+.expand {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-page) var(--ease-out),
+    opacity var(--dur-base) ease;
+}
+
+.expand.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.expand-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.expand-pad {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 3px;
+}
+
+/* --------------------------------- ring --------------------------------- */
+
+.ring {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+}
+
+.ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring-track {
+  fill: none;
+  stroke: var(--track);
+  stroke-width: 6;
+}
+
+.ring-fill {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke var(--dur-slow) ease;
+}
+
+.ring.is-warning .ring-fill {
+  stroke: var(--warning);
+}
+
+.ring.is-over .ring-fill {
+  stroke: var(--danger);
+}
+
+/* ---- App launch: a soft fade, so the first screen never flashes ---- */
+@keyframes app-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.app {
+  animation: app-in 360ms var(--ease-out) both;
+}
+
+/* While something animates, it may be a copy of a removed element ("ghost"). */
+.ghost {
+  z-index: 3;
+  pointer-events: none;
+  box-sizing: border-box;
+  list-style: none;
+}
+
+/* Lowest priority, so an element's own background (cards, hero, notices) still wins. */
+:where(.ghost) {
+  background: var(--surface);
 }

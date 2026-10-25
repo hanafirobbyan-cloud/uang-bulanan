@@ -1,10 +1,10 @@
 // Pengeluaran: all expenses of a period, newest first, with filters.
 
 import { append, h, icon } from '../ui.js';
-import { screenHeader, card, money, emptyState, expenseRow, newestFirst, periodControls } from '../components.js';
+import { screenHeader, card, money, emptyState, expenseRow, newestFirst, periodControls, keyed } from '../components.js';
 import { expensesForPeriod, recurringForPeriod } from '../logic.js';
 import { formatDayHeading, formatRupiah } from '../format.js';
-import { openExpenseForm } from './expense-form.js';
+import { openExpenseForm, deleteExpenseWithUndo } from './expense-form.js';
 
 export const title = 'Pengeluaran';
 
@@ -43,17 +43,17 @@ export function render(main, ctx) {
 
   append(
     main,
-    screenHeader('Pengeluaran', null, addButton),
-    picker,
+    keyed(screenHeader('Pengeluaran', null, addButton), 'header'),
+    keyed(picker, 'picker'),
     h(
       'div',
-      { class: 'filters' },
+      { class: 'filters', 'data-key': 'filters' },
       filterSelect('Saring menurut pos', 'bucketId', 'Semua pos', data.buckets),
       filterSelect('Saring menurut dompet', 'walletId', 'Semua dompet', data.wallets),
     ),
     h(
       'p',
-      { class: 'list-summary' },
+      { class: 'list-summary', 'data-key': 'summary' },
       `${shown.length} pengeluaran · total `,
       money(sum(shown)),
       recurringTotal > 0 && !filtered ? h('span', { class: 'muted' }, ` · ditambah rutin ${formatRupiah(recurringTotal)}`) : null,
@@ -61,18 +61,16 @@ export function render(main, ctx) {
   );
 
   if (shown.length === 0) {
-    append(
-      main,
-      card(
-        null,
-        filtered && all.length > 0
-          ? emptyState(
-              'Tidak ada pengeluaran yang cocok dengan saringan ini.',
-              h('button', { type: 'button', class: 'btn', onclick: () => { ui.filters.bucketId = ''; ui.filters.walletId = ''; ctx.refresh(); } }, 'Hapus saringan'),
-            )
-          : emptyState('Belum ada pengeluaran. Tekan + untuk mulai.', h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openExpenseForm(ctx) }, icon('plus'), 'Catat Pengeluaran')),
-      ),
-    );
+    const clearFilters = () => {
+      ui.filters.bucketId = '';
+      ui.filters.walletId = '';
+      ctx.refresh();
+    };
+    const empty =
+      filtered && all.length > 0
+        ? emptyState('Tidak ada pengeluaran yang cocok dengan saringan ini.', h('button', { type: 'button', class: 'btn', onclick: clearFilters }, 'Hapus saringan'))
+        : emptyState('Belum ada pengeluaran. Tekan + untuk mulai.', h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openExpenseForm(ctx) }, icon('plus'), 'Catat Pengeluaran'));
+    append(main, keyed(card(null, empty), 'empty'));
     return;
   }
 
@@ -88,9 +86,9 @@ export function render(main, ctx) {
       main,
       h(
         'section',
-        { class: 'card day-group' },
+        { class: 'card day-group', 'data-key': `day:${date}` },
         h('h2', { class: 'day-heading' }, h('span', null, formatDayHeading(date, today)), money(sum(items), 'day-total')),
-        h('ul', { class: 'rows' }, items.map((e) => expenseRow(e, data, open))),
+        h('ul', { class: 'rows' }, items.map((e) => expenseRow(e, data, open, deleteExpenseWithUndo))),
       ),
     );
   }

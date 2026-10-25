@@ -10,8 +10,10 @@
 
 import * as storage from './storage.js';
 import {
+  SCHEMA_VERSION,
   createEmptyData,
   normalizeData,
+  dataVersion,
   checkAmount,
   checkName,
   checkDate,
@@ -21,28 +23,35 @@ import {
   cleanNote,
 } from './data.js';
 import { freezePastIncome, remapPeriodKeys, getPeriod } from './logic.js';
+import { checkPlan, planSummary } from './planner.js';
 
 const DATA_KEY = 'data';
+const PRE_UPDATE_KEY = 'sebelum-update'; // untouched copy of the data from before the last upgrade
 const listeners = new Set();
 
 let data = createEmptyData();
 let storageAvailable = true;
 let loadMessages = [];
+let upgradedFrom = null;
 
-/** An error whose message can be shown to the user as-is (in Indonesian). */
+/**
+ * An error whose message can be shown to the user as-is (in Indonesian).
+ * `field` (optional) names the input it is about, so the form can shake that input.
+ */
 export class UserError extends Error {
-  constructor(message) {
+  constructor(message, field = null) {
     super(message);
     this.name = 'UserError';
+    this.field = field;
   }
 }
 
-function fail(message) {
-  throw new UserError(message);
+function fail(message, field = null) {
+  throw new UserError(message, field);
 }
 
-function failIf(message) {
-  if (message) fail(message);
+function failIf(message, field = null) {
+  if (message) fail(message, field);
 }
 
 const clone = (value) => (typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
@@ -63,6 +72,7 @@ export function makeId(prefix) {
  */
 export function load(stamp) {
   loadMessages = [];
+  upgradedFrom = null;
   storageAvailable = storage.isAvailable();
   if (!storageAvailable) {
     data = createEmptyData();
@@ -82,13 +92,48 @@ export function load(stamp) {
     return;
   }
 
-  const { data: repaired, problems } = normalizeData(saved.value);
+  // Data from an older app version: keep an untouched copy first, then upgrade it.
+  const version = dataVersion(saved.value);
+  const upgrading = version < SCHEMA_VERSION;
+  if (upgrading) {
+    const copied = storage.write(PRE_UPDATE_KEY, { fromVersion: version, toVersion: SCHEMA_VERSION, savedOn: stamp, data: saved.value });
+    if (!copied) loadMessages.push('Salinan otomatis data lama tidak bisa disimpan (penyimpanan penuh). Sebaiknya ekspor cadangan sekarang.');
+  }
+
+  const { data: repaired, problems } = normalizeData(saved.value); // also upgrades older data
   data = repaired;
   if (problems.length) {
     storage.write(`sebelum-perbaikan-${stamp}`, saved.value);
-    storage.write(DATA_KEY, data);
     loadMessages.push('Sebagian data tersimpan bermasalah dan sudah diperbaiki otomatis:', ...problems);
   }
+  if (upgrading || problems.length) storage.write(DATA_KEY, data);
+  if (upgrading) upgradedFrom = version;
+}
+
+/** The data version that was upgraded at startup (e.g. 1), or null if nothing was upgraded. */
+export function takeUpgradeInfo() {
+  const from = upgradedFrom;
+  upgradedFrom = null;
+  return from;
+}
+
+/** Is there a copy of the data from before the last upgrade? Returns { savedOn, fromVersion } or null. */
+export function preUpdateInfo() {
+  if (!storageAvailable) return null;
+  const saved = storage.read(PRE_UPDATE_KEY);
+  const copy = saved.value;
+  if (saved.error || !copy || typeof copy !== 'object' || !copy.data) return null;
+  return { savedOn: typeof copy.savedOn === 'string' ? copy.savedOn : null, fromVersion: copy.fromVersion };
+}
+
+/**
+ * "Pulihkan data sebelum update": replace the current data with the copy saved
+ * before the last upgrade (upgraded again, so the new app can use it).
+ */
+export function restorePreUpdate() {
+  const saved = storage.read(PRE_UPDATE_KEY);
+  if (saved.error || !saved.value || !saved.value.data) fail('Data sebelum update tidak ditemukan.');
+  replaceAllData(normalizeData(saved.value.data).data);
 }
 
 /** True if a "storage" event from another tab means our data changed there. */
@@ -155,10 +200,10 @@ const cleanBucket = (b) => ({ id: b.id, name: cleanName(b.name), percent: b.perc
  * the income of the current period, so the first daily numbers are realistic.
  */
 export function completeSetup({ monthlyIncome, incomeDay, buckets, currentRemaining = null }, today) {
-  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }));
-  failIf(checkIncomeDay(incomeDay));
-  if (currentRemaining !== null) failIf(checkAmount(currentRemaining, { allowZero: true, label: 'Sisa uang periode ini' }));
-  failIf(checkBuckets(buckets));
+  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }), 'income');
+  failIf(checkIncomeDay(incomeDay), 'incomeDay');
+  if (currentRemaining !== null) failIf(checkAmount(currentRemaining, { allowZero: true, label: 'Sisa uang periode ini' }), 'remaining');
+  failIf(checkBuckets(buckets), 'buckets');
   commit((d) => {
     d.settings.monthlyIncome = monthlyIncome;
     d.settings.incomeDay = incomeDay;
@@ -173,10 +218,10 @@ export function completeSetup({ monthlyIncome, incomeDay, buckets, currentRemain
 /* ------------------------------- expenses ------------------------------- */
 
 function checkedExpense({ amount, bucketId, walletId, date, note }) {
-  failIf(checkAmount(amount));
-  if (!data.buckets.some((b) => b.id === bucketId)) fail('Pilih pos anggaran.');
-  if (!data.wallets.some((w) => w.id === walletId)) fail('Pilih dompet.');
-  failIf(checkDate(date));
+  failIf(checkAmount(amount), 'amount');
+  if (!data.buckets.some((b) => b.id === bucketId)) fail('Pilih pos anggaran.', 'bucket');
+  if (!data.wallets.some((w) => w.id === walletId)) fail('Pilih dompet.', 'wallet');
+  failIf(checkDate(date), 'date');
   return { amount, bucketId, walletId, date, note: cleanNote(note) };
 }
 
@@ -199,6 +244,15 @@ export function updateExpense(id, fields) {
   });
 }
 
+/** Put back an expense that was just deleted ("Urungkan"), with its original id. */
+export function restoreExpense(expense) {
+  if (data.expenses.some((e) => e.id === expense.id)) return;
+  const clean = checkedExpense(expense);
+  commit((d) => {
+    d.expenses.push({ id: expense.id, ...clean, createdAt: expense.createdAt || 0 });
+  });
+}
+
 export function deleteExpense(id) {
   commit((d) => {
     d.expenses = d.expenses.filter((e) => e.id !== id);
@@ -212,8 +266,8 @@ export function deleteExpense(id) {
  * Returns a list of short notes about side effects (to show the user).
  */
 export function updateIncomeSettings({ monthlyIncome, incomeDay }, today) {
-  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }));
-  failIf(checkIncomeDay(incomeDay));
+  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }), 'income');
+  failIf(checkIncomeDay(incomeDay), 'incomeDay');
   return commit((d) => {
     const notes = [];
     if (monthlyIncome !== d.settings.monthlyIncome) {
@@ -272,7 +326,7 @@ export function walletUsage(walletId) {
 }
 
 export function addWallet(name) {
-  failIf(checkName(name, data.wallets.map((w) => w.name)));
+  failIf(checkName(name, data.wallets.map((w) => w.name)), 'name');
   return commit((d) => {
     const wallet = { id: makeId('w'), name: cleanName(name) };
     d.wallets.push(wallet);
@@ -281,7 +335,7 @@ export function addWallet(name) {
 }
 
 export function renameWallet(id, name) {
-  failIf(checkName(name, data.wallets.filter((w) => w.id !== id).map((w) => w.name)));
+  failIf(checkName(name, data.wallets.filter((w) => w.id !== id).map((w) => w.name)), 'name');
   if (!data.wallets.some((w) => w.id === id)) fail('Dompet ini sudah tidak ada.');
   commit((d) => {
     d.wallets.find((w) => w.id === id).name = cleanName(name);
@@ -308,12 +362,13 @@ export function deleteWallet(id, moveToId = null) {
 
 /* ------------------------ recurring bills (rutin) ------------------------ */
 
-function checkedRecurring({ name, amount, bucketId, walletId }) {
-  failIf(checkName(name));
-  failIf(checkAmount(amount));
-  if (!data.buckets.some((b) => b.id === bucketId)) fail('Pilih pos anggaran.');
-  if (!data.wallets.some((w) => w.id === walletId)) fail('Pilih dompet.');
-  return { name: cleanName(name), amount, bucketId, walletId };
+function checkedRecurring({ name, amount, bucketId, walletId, dueDay = null }) {
+  failIf(checkName(name), 'name');
+  failIf(checkAmount(amount), 'amount');
+  if (!data.buckets.some((b) => b.id === bucketId)) fail('Pilih pos anggaran.', 'bucket');
+  if (!data.wallets.some((w) => w.id === walletId)) fail('Pilih dompet.', 'wallet');
+  if (dueDay !== null && !(Number.isInteger(dueDay) && dueDay >= 1 && dueDay <= 31)) fail('Tanggal jatuh tempo harus 1 sampai 31.', 'dueDay');
+  return { name: cleanName(name), amount, bucketId, walletId, dueDay };
 }
 
 /**
@@ -358,7 +413,7 @@ export function deleteRecurring(id) {
 /** Set a special income for one period, or remove it with amount = null. */
 export function setIncomeOverride(periodStart, amount) {
   failIf(checkDate(periodStart));
-  if (amount !== null) failIf(checkAmount(amount, { allowZero: true, label: 'Pemasukan' }));
+  if (amount !== null) failIf(checkAmount(amount, { allowZero: true, label: 'Pemasukan' }), 'amount');
   commit((d) => {
     if (amount === null) delete d.incomeOverrides[periodStart];
     else d.incomeOverrides[periodStart] = amount;
@@ -378,6 +433,82 @@ export function moveLeftoverToSavings(period, amount, today) {
 export function undoSavings(id) {
   commit((d) => {
     d.savings = d.savings.filter((s) => s.id !== id);
+  });
+}
+
+/* ------------------------- Rencana Cukup (plans) ------------------------- */
+
+/** Build a checked plan from the form input; `base` holds what never changes (id, start date…). */
+function checkedPlan(input, base) {
+  const plan = {
+    id: base.id,
+    startDate: base.startDate,
+    endDate: input.endDate,
+    endMode: input.endMode,
+    money: input.money,
+    obligations: (input.obligations || []).map((o) => ({
+      id: o.id || makeId('o'),
+      name: cleanName(o.name),
+      amount: o.amount,
+      date: o.date,
+      paid: o.paid === true,
+      fromRecurringId: o.fromRecurringId || null,
+    })),
+    emergency: input.emergency ?? 0,
+    minDaily: input.minDaily ?? 0,
+    pattern: input.pattern,
+    weekendWeight: input.weekendWeight,
+    baselineIds: base.baselineIds,
+    createdOn: base.createdOn,
+  };
+  const problem = checkPlan(plan);
+  if (problem) fail(problem.message, problem.field);
+  return plan;
+}
+
+/** "Buat rencana": start a new plan today. Only one plan can be active at a time. */
+export function createPlan(input, today) {
+  if (data.plans.active) fail('Masih ada rencana yang aktif. Akhiri dulu rencana itu.');
+  const plan = checkedPlan(input, {
+    id: makeId('p'),
+    startDate: today,
+    // Expenses already logged today are part of "the money I have now", so they don't count twice.
+    baselineIds: data.expenses.filter((e) => e.date === today).map((e) => e.id),
+    createdOn: today,
+  });
+  return commit((d) => {
+    d.plans.active = plan;
+    return plan;
+  });
+}
+
+/** "Ubah rencana": change the active plan. It keeps its start date. */
+export function updatePlan(input) {
+  const current = data.plans.active;
+  if (!current) fail('Tidak ada rencana yang aktif.');
+  const plan = checkedPlan(input, current);
+  commit((d) => {
+    d.plans.active = plan;
+  });
+}
+
+/** Tick an obligation as paid ("Lunas"). The money stays reserved either way. */
+export function setObligationPaid(obligationId, paid) {
+  commit((d) => {
+    const obligation = d.plans.active && d.plans.active.obligations.find((o) => o.id === obligationId);
+    if (obligation) obligation.paid = paid;
+  });
+}
+
+/** "Akhiri rencana": move the active plan to the history with a short summary. Returns the summary. */
+export function endPlan(today) {
+  const plan = data.plans.active;
+  if (!plan) fail('Tidak ada rencana yang aktif.');
+  const summary = planSummary(plan, data.expenses, today);
+  return commit((d) => {
+    d.plans.active = null;
+    d.plans.history = [summary, ...d.plans.history].slice(0, 50);
+    return summary;
   });
 }
 
