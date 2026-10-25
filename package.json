@@ -1,0 +1,11 @@
+{
+  "name": "uang-bulanan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aplikasi pribadi untuk mengatur uang bulanan (PWA, tanpa server).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "icons": "node tools/make-icons.mjs"
+  }
+}
