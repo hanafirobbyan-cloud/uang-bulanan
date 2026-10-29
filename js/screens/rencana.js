@@ -2,7 +2,7 @@
 // All the math is in planner.js; this file only shows it.
 
 import { append, h, icon, moneyInput, confirmDialog, alertDialog, toast, errorMessage } from '../ui.js';
-import { screenHeader, card, money, notice, keyed, progressBar, ring, statusBadge } from '../components.js';
+import { screenHeader, card, money, notice, keyed, progressBar, meter, statusBadge } from '../components.js';
 import { planReport, planSummary, reverseCalc, planPurchase, savingTips } from '../planner.js';
 import { weekday } from '../logic.js';
 import { formatRupiah, formatDate, formatDateLong, formatDateShort, DAYS } from '../format.js';
@@ -95,10 +95,8 @@ function introCard(ctx) {
 
 function planHero(r) {
   const negative = r.sisaHariIni < 0;
-  return h(
-    'section',
-    { class: `hero plan-hero${negative ? ' is-negative' : ''}`, 'data-key': 'plan-hero' },
-    h('div', { class: `hero-tint${negative ? ' is-on' : ''}`, 'aria-hidden': 'true', 'data-state-key': 'plan:tint', 'data-state': negative ? 'on' : 'off' }),
+  const panel = card(
+    'Rencana hari ini',
     h(
       'div',
       { class: 'plan-hero-top' },
@@ -108,18 +106,21 @@ function planHero(r) {
         h('p', { class: 'hero-label' }, 'Sisa hari ini (rencana)'),
         h('p', { class: 'hero-amount', id: 'plan-sisa', 'data-count-key': 'plan:sisa', 'data-value': String(r.sisaHariIni) }, formatRupiah(r.sisaHariIni)),
       ),
-      ring(r.spentToday, r.allowanceToday, `Terpakai hari ini ${formatRupiah(r.spentToday)} dari ${formatRupiah(r.allowanceToday)}`, 'plan:today'),
+      meter(r.spentToday, r.allowanceToday, `Terpakai hari ini ${formatRupiah(r.spentToday)} dari ${formatRupiah(r.allowanceToday)}`, 'plan:today'),
     ),
     h('div', { class: 'plan-status' }, statusBadge(r.status), h('p', { class: 'plan-status-text', id: 'plan-status-text' }, explanation(r))),
     h(
       'dl',
       { class: 'hero-stats' },
       h('div', null, h('dt', null, 'Jatah hari ini'), h('dd', { id: 'plan-aman' }, money(r.allowanceToday, '', 'plan:aman'))),
-      h('div', null, h('dt', null, 'Terpakai hari ini'), h('dd', null, money(r.spentToday, '', 'plan:spent'))),
-      h('div', null, h('dt', null, 'Sisa hari'), h('dd', null, `${r.daysLeft} hari`, h('small', null, `sampai ${formatDateShort(r.endDate)}`))),
+      h('div', null, h('dt', null, 'Terpakai hari ini'), h('dd', null, money(r.spentToday, '', 'plan:spent', 'down'))),
+      h('div', null, h('dt', null, 'Sisa hari'), h('dd', null, `${r.daysLeft} hari`), h('small', null, `sampai ${formatDateShort(r.endDate)}`)),
       h('div', null, h('dt', null, 'Sisa uang rencana'), h('dd', null, money(r.remaining, '', 'plan:remaining'))),
     ),
   );
+  panel.classList.add('hero', 'plan-hero');
+  if (negative) panel.classList.add('is-negative');
+  return keyed(panel, 'plan-hero');
 }
 
 function shortfallNotice(r) {
@@ -237,7 +238,7 @@ function timelineCard(r) {
     let diffNode = null;
     if (d.state !== 'future') {
       detail = `${formatRupiah(d.spent)} dari ${formatRupiah(d.planned)}`;
-      if (d.state === 'past') diffNode = h('span', { class: diff >= 0 ? 'is-under' : 'is-over' }, diff >= 0 ? `hemat ${formatRupiah(diff)}` : `lebih ${formatRupiah(-diff)}`);
+      if (d.state === 'past') diffNode = h('span', { class: diff >= 0 ? 'is-under' : 'is-over' }, diff >= 0 ? `▲ hemat ${formatRupiah(diff)}` : `▼ lebih ${formatRupiah(-diff)}`);
     }
     return h(
       'li',
@@ -354,7 +355,7 @@ function historyCard(data) {
         h('span', { class: 'row-title', text: `${formatDateShort(e.startDate)} – ${formatDateShort(e.endDate, true)}` }),
         h('span', { class: 'row-sub', text: `Rencana ${formatRupiah(e.spendable)} · terpakai ${formatRupiah(e.spent)}${e.endedEarly ? ' · diakhiri lebih cepat' : ''}` }),
       ),
-      h('span', { class: `row-amount ${e.leftover >= 0 ? 'is-under' : 'is-over'}` }, `${e.leftover >= 0 ? 'Sisa' : 'Kurang'} ${formatRupiah(Math.abs(e.leftover))}`),
+      h('span', { class: `row-amount ${e.leftover >= 0 ? 'is-under' : 'is-over'}` }, `${e.leftover >= 0 ? '▲ Sisa' : '▼ Kurang'} ${formatRupiah(Math.abs(e.leftover))}`),
     ),
   );
   return keyed(card('Riwayat rencana', h('ul', { class: 'rows' }, rows)), 'card:plan-history');

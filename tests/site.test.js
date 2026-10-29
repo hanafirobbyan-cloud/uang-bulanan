@@ -32,7 +32,7 @@ test('app version is the same in sw.js and js/version.js', () => {
 });
 
 test('the service worker caches every app file, and only files that exist', () => {
-  const appFiles = ['index.html', 'manifest.webmanifest', ...listFiles('css'), ...listFiles('js'), ...listFiles('icons')]
+  const appFiles = ['index.html', 'manifest.webmanifest', ...listFiles('css'), ...listFiles('js'), ...listFiles('icons'), ...listFiles('fonts')]
     .filter((f) => !f.endsWith('.DS_Store'))
     .map((f) => `./${f}`);
   for (const file of appFiles) assert.ok(precached.includes(file), `Add '${file}' to FILES in sw.js`);
@@ -49,7 +49,8 @@ test('manifest is valid and uses relative paths', () => {
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, './');
   assert.equal(manifest.scope, './');
-  assert.ok(manifest.theme_color && manifest.background_color);
+  assert.equal(manifest.background_color, '#000000', 'black, so there is never a white flash on launch');
+  assert.equal(manifest.theme_color, '#000000');
   const sizes = new Set();
   for (const icon of manifest.icons) {
     assert.ok(icon.src.startsWith('./'), `${icon.src} must be relative`);
@@ -78,6 +79,8 @@ test('index.html has the iPhone tags and only relative links', () => {
     'rel="apple-touch-icon"',
     'rel="manifest"',
     'lang="id"',
+    'name="theme-color" content="#000000"',
+    'name="apple-mobile-web-app-status-bar-style" content="black-translucent"',
   ]) {
     assert.ok(html.includes(needle), `index.html is missing ${needle}`);
   }
@@ -105,4 +108,26 @@ test('every JavaScript import points to an existing file', () => {
       assert.ok(existsSync(target), `${file}: import "${path}" not found (${relative(ROOT, target)})`);
     }
   }
+});
+
+test('the self-hosted font has its license and is used first in the font list', () => {
+  assert.ok(existsSync(join(ROOT, 'fonts/OFL.txt')), 'fonts/OFL.txt (SIL Open Font License) must be included');
+  assert.match(read('fonts/OFL.txt'), /SIL OPEN FONT LICENSE Version 1\.1/);
+  const css = read('css/app.css');
+  for (const weight of ['Regular', 'Medium', 'Bold']) {
+    assert.ok(css.includes(`url("../fonts/IBMPlexMono-${weight}.woff2")`), `@font-face for ${weight}`);
+    assert.ok(precached.includes(`./fonts/IBMPlexMono-${weight}.woff2`), `precache ${weight}`);
+  }
+  assert.match(css, /font-display:\s*swap/);
+  assert.match(css, /--font-mono:\s*"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace/);
+});
+
+test('start_url, scope and the files the service worker depends on stay the same (existing installs keep working)', () => {
+  const manifest = JSON.parse(read('manifest.webmanifest'));
+  assert.deepEqual([manifest.id, manifest.start_url, manifest.scope], ['./', './', './']);
+  for (const file of ['./index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/pwa.js', './js/version.js']) {
+    assert.ok(precached.includes(file), `${file} is still precached`);
+  }
+  assert.match(read('js/pwa.js'), /register\('\.\/sw\.js'/);
+  assert.match(read('index.html'), /id="update-banner"[\s\S]*Versi baru tersedia[\s\S]*id="update-reload"/);
 });

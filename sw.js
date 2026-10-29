@@ -12,7 +12,7 @@
 // to it. Old cached files are deleted automatically.
 // ==========================================================================
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
 const CACHE_PREFIX = 'uang-bulanan-';
 const CACHE_NAME = `${CACHE_PREFIX}${APP_VERSION}`;
 
@@ -24,21 +24,27 @@ const FILES = [
   './css/app.css',
   './js/app.js',
   './js/backup.js',
+  './js/chart.js',
   './js/clock.js',
+  './js/commands.js',
   './js/components.js',
   './js/data.js',
   './js/format.js',
+  './js/income.js',
   './js/logic.js',
   './js/motion.js',
   './js/planner.js',
   './js/pwa.js',
+  './js/schedule.js',
   './js/storage.js',
   './js/store.js',
+  './js/terminal.js',
   './js/ui.js',
   './js/version.js',
   './js/screens/beranda.js',
   './js/screens/dompet.js',
   './js/screens/expense-form.js',
+  './js/screens/masuk.js',
   './js/screens/pengaturan.js',
   './js/screens/pengeluaran.js',
   './js/screens/plan-form.js',
@@ -53,6 +59,10 @@ const FILES = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
+  './fonts/IBMPlexMono-Bold.woff2',
+  './fonts/IBMPlexMono-Medium.woff2',
+  './fonts/IBMPlexMono-Regular.woff2',
+  './fonts/OFL.txt',
 ];
 
 // Install: download all files into a new cache named after this version.

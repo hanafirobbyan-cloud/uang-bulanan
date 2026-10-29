@@ -1,11 +1,11 @@
-// Pengaturan: monthly amount, income day, links to buckets / wallets / recurring,
-// backup (export / import), app version and "Hapus semua data".
+// Pengaturan: the income schedule ("Jadwal Uang Masuk") and "Cara hitung",
+// links to buckets / wallets / recurring, backup (export / import), app
+// version and "Hapus semua data".
 
-import { append, h, icon, moneyInput, toast, errorMessage, field, confirmDialog, openDialog } from '../ui.js';
+import { append, h, icon, toast, errorMessage, confirmDialog, openDialog } from '../ui.js';
 import { screenHeader, card, notice, keyed } from '../components.js';
-import { shake } from '../motion.js';
-import { getPeriod } from '../logic.js';
-import { formatRupiah, formatDate, formatPeriod } from '../format.js';
+import { formatRupiah, formatDate } from '../format.js';
+import { scheduleCard, calcModeCard } from '../income.js';
 import { exportBackup, chooseBackupFile } from '../backup.js';
 import { checkForUpdate, isIOS, isStandalone } from '../pwa.js';
 import { isPersisted } from '../storage.js';
@@ -16,6 +16,9 @@ export const title = 'Pengaturan';
 
 export function render(main, ctx) {
   const { data } = ctx;
+  // Panels are numbered in the order they are made, so make them in the order they are shown.
+  const schedule = scheduleCard(ctx);
+  const mode = calcModeCard(ctx);
   const active = data.recurring.filter((r) => !r.endDate);
   const inactive = data.recurring.length - active.length;
   let recurringText = 'Belum ada';
@@ -30,8 +33,11 @@ export function render(main, ctx) {
       linkRow('#/pos', 'Pos anggaran', data.buckets.map((b) => `${b.name} ${b.percent}%`).join(' · ')),
       linkRow('#/dompet', 'Dompet', `${data.wallets.length} dompet`),
       linkRow('#/rutin', 'Pengeluaran rutin', recurringText),
+    linkRow('#/masuk', 'Status uang masuk periode ini', 'Geser tanggal kalau uang belum masuk'),
     ),
   );
+  const backup = backupCard(ctx);
+  const about = aboutCard();
   const danger = card(
     'Hapus data',
     h('p', { class: 'muted' }, 'Menghapus semua data aplikasi ini dari perangkat ini. Tidak bisa dibatalkan.'),
@@ -41,10 +47,11 @@ export function render(main, ctx) {
   append(
     main,
     keyed(screenHeader('Pengaturan'), 'header'),
-    keyed(incomeCard(ctx), 'card:income'),
+    schedule,
+    mode,
     keyed(manage, 'card:manage'),
-    keyed(backupCard(ctx), 'card:backup'),
-    keyed(aboutCard(), 'card:about'),
+    keyed(backup, 'card:backup'),
+    keyed(about, 'card:about'),
     keyed(danger, 'card:danger'),
   );
 }
@@ -55,45 +62,6 @@ function linkRow(href, label, sub) {
     null,
     h('a', { class: 'row row-button', href }, h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: label }), h('span', { class: 'row-sub', text: sub })), icon('chevronRight')),
   );
-}
-
-function incomeCard(ctx) {
-  const { data, today } = ctx;
-  const income = moneyInput({ value: data.settings.monthlyIncome, id: 'set-income' });
-  const daySelect = h(
-    'select',
-    { id: 'set-day', class: 'input', value: String(data.settings.incomeDay) },
-    Array.from({ length: 31 }, (_, i) => h('option', { value: String(i + 1) }, `Tanggal ${i + 1}`)),
-  );
-  const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
-  const current = getPeriod(today, data.settings.incomeDay);
-
-  const form = h(
-    'form',
-    { class: 'stack', novalidate: true },
-    field({ label: 'Uang bulanan', control: income.element, forId: 'set-income' }),
-    field({
-      label: 'Tanggal uang masuk',
-      control: daySelect,
-      forId: 'set-day',
-      hint: `Periode sekarang: ${formatPeriod(current)}. Kalau tanggalnya tidak ada di suatu bulan, dipakai tanggal terakhir bulan itu.`,
-    }),
-    error,
-    h('button', { type: 'submit', class: 'btn btn-primary' }, 'Simpan perubahan'),
-    h('p', { class: 'hint' }, 'Dapat kiriman tambahan bulan ini? Ubah pemasukan khusus periode itu di Ringkasan.'),
-  );
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    try {
-      const notes = store.updateIncomeSettings({ monthlyIncome: income.getValue(), incomeDay: Number(daySelect.value) }, today);
-      toast(['Pengaturan disimpan.', ...notes].join(' '), 'success');
-    } catch (err) {
-      error.textContent = errorMessage(err);
-      error.hidden = false;
-      shake({ income: income.element, incomeDay: daySelect }[err && err.field] || error);
-    }
-  });
-  return card('Uang bulanan', form);
 }
 
 function backupCard(ctx) {
@@ -179,7 +147,7 @@ async function deleteEverything(ctx) {
   const first = await confirmDialog({
     title: 'Hapus semua data?',
     message: [
-      'Semua pengeluaran, pengeluaran rutin, pos, dompet, catatan tabungan, dan pengaturan di perangkat ini akan dihapus.',
+      'Semua pengeluaran, pengeluaran rutin, pos, dompet, jadwal uang masuk, rencana, catatan tabungan, dan pengaturan di perangkat ini akan dihapus.',
       'Sebaiknya ekspor cadangan dulu.',
     ],
     confirmLabel: 'Lanjutkan',
@@ -202,6 +170,7 @@ async function deleteEverything(ctx) {
   ctx.ui.periodStart = null;
   ctx.ui.filters = { bucketId: '', walletId: '' };
   ctx.ui.simulation = { amount: null, bucketId: null };
+  ctx.ui.plan = { perDay: null, buy: null };
   store.resetAll();
   toast('Semua data sudah dihapus.');
 }

@@ -1,7 +1,7 @@
-// Pengeluaran: all expenses of a period, newest first, with filters.
+// Pengeluaran: all expenses of a period in one table, newest first, with filters.
 
 import { append, h, icon } from '../ui.js';
-import { screenHeader, card, money, emptyState, expenseRow, newestFirst, periodControls, keyed } from '../components.js';
+import { screenHeader, card, money, emptyState, expenseRow, expenseTableHead, newestFirst, periodControls, keyed } from '../components.js';
 import { expensesForPeriod, recurringForPeriod } from '../logic.js';
 import { formatDayHeading, formatRupiah } from '../format.js';
 import { openExpenseForm, deleteExpenseWithUndo } from './expense-form.js';
@@ -25,7 +25,7 @@ export function render(main, ctx) {
   const recurringTotal = sum(recurringForPeriod(data.recurring, period));
   const filtered = Boolean(ui.filters.bucketId || ui.filters.walletId);
 
-  const addButton = h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openExpenseForm(ctx) }, icon('plus'), 'Catat');
+  const addButton = h('button', { type: 'button', class: 'btn btn-primary', id: 'klr-add', onclick: () => openExpenseForm(ctx) }, icon('plus'), 'Catat');
 
   const filterSelect = (label, key, allLabel, options) => {
     const select = h(
@@ -74,22 +74,24 @@ export function render(main, ctx) {
     return;
   }
 
-  // Group by day.
+  // One table; a separator row with the day's total starts every day.
   const days = new Map();
   for (const e of shown) {
     if (!days.has(e.date)) days.set(e.date, []);
     days.get(e.date).push(e);
   }
   const open = (expense) => openExpenseForm(ctx, { expense });
+  const rows = [expenseTableHead()];
   for (const [date, items] of days) {
-    append(
-      main,
+    rows.push(
       h(
-        'section',
-        { class: 'card day-group', 'data-key': `day:${date}` },
-        h('h2', { class: 'day-heading' }, h('span', null, formatDayHeading(date, today)), money(sum(items), 'day-total')),
-        h('ul', { class: 'rows' }, items.map((e) => expenseRow(e, data, open, deleteExpenseWithUndo))),
+        'li',
+        { class: 'day-sep', 'data-key': `day:${date}` },
+        h('span', { class: 'day-heading' }, formatDayHeading(date, today)),
+        h('span', { class: 'day-total' }, `${items.length} trx · `, money(sum(items))),
       ),
+      ...items.map((e) => expenseRow(e, data, open, deleteExpenseWithUndo)),
     );
   }
+  append(main, keyed(card('Daftar pengeluaran', h('ul', { class: 'rows expense-table' }, rows), h('p', { class: 'hint' }, 'Ketuk baris untuk mengubah. Geser ke kiri untuk menghapus. Keyboard: ↑ ↓ lalu Enter.')), 'card:list'));
 }

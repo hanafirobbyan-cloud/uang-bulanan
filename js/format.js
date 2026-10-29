@@ -31,6 +31,28 @@ export function formatRupiah(amount) {
 }
 
 /**
+ * A change with its sign, for "market tick" style numbers:
+ * 5000 -> '+Rp 5.000', -5000 -> '−Rp 5.000' (a real minus sign), 0 -> 'Rp 0'.
+ */
+export function formatDelta(amount) {
+  const n = Math.trunc(Number(amount) || 0);
+  if (n === 0) return formatRupiah(0);
+  return `${n > 0 ? '+' : '−'}Rp ${numberFormat.format(Math.abs(n))}`;
+}
+
+/** Short amounts for small spaces (chart labels): 3000000 -> '3 jt', 1250000 -> '1,25 jt', 850000 -> '850 rb'. */
+export function formatCompact(amount) {
+  const n = Math.trunc(Number(amount) || 0);
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  const short = (value, unit) => `${sign}${new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 }).format(value)} ${unit}`;
+  if (abs >= 1_000_000_000) return short(Math.floor(abs / 10_000_000) / 100, 'M');
+  if (abs >= 1_000_000) return short(Math.floor(abs / 10_000) / 100, 'jt');
+  if (abs >= 1_000) return short(Math.floor(abs / 1_000), 'rb');
+  return `${sign}${abs}`;
+}
+
+/**
  * Read a typed amount: '1.500.000', 'Rp 25.000' or '25000' -> number.
  * Returns null if there are no digits at all.
  */

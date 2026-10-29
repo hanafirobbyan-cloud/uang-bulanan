@@ -17,12 +17,21 @@ import {
   checkAmount,
   checkName,
   checkDate,
-  checkIncomeDay,
   checkBuckets,
   cleanName,
   cleanNote,
 } from './data.js';
-import { freezePastIncome, remapPeriodKeys, getPeriod } from './logic.js';
+import {
+  freezePastIncome,
+  remapPeriodKeys,
+  getPeriod,
+  incomeSchedule,
+  periodStartDay,
+  periodInstallments,
+  installmentDate,
+  CALC_MODES,
+} from './logic.js';
+import { checkSchedule, checkPeriodIncome, checkDelay } from './schedule.js';
 import { checkPlan, planSummary } from './planner.js';
 
 const DATA_KEY = 'data';
@@ -194,23 +203,47 @@ function commit(change) {
 
 const cleanBucket = (b) => ({ id: b.id, name: cleanName(b.name), percent: b.percent, spendable: b.spendable === true });
 
+/** Check a monthly schedule from a form and give it ids and a fixed order. Throws a UserError if it is wrong. */
+function checkedSchedule({ total, installments }) {
+  const problem = checkSchedule({ total, installments });
+  if (problem) fail(problem.message, problem.field);
+  return installments
+    .map((i) => ({ id: i.id || makeId('i'), day: i.day, amount: i.amount }))
+    .sort((a, b) => a.day - b.day);
+}
+
+/** Put a checked schedule into the settings (and the copies that depend on it). */
+function applySchedule(settings, schedule) {
+  settings.incomeSchedule = schedule;
+  settings.monthlyIncome = schedule.reduce((sum, i) => sum + i.amount, 0);
+  settings.incomeDay = schedule[0].day;
+}
+
 /**
- * Finish the first-run setup. `currentRemaining` (optional) is the money still
- * left right now when the app is started in the middle of a period; it becomes
- * the income of the current period, so the first daily numbers are realistic.
+ * Finish the first-run setup. `income` is { total, installments: [{ day, amount }] }.
+ * `currentRemaining` (optional) is the money still left right now when the app
+ * is started in the middle of a period. It replaces this period's installments
+ * that already came; the ones still to come this period stay. That way the
+ * first daily numbers are realistic.
  */
-export function completeSetup({ monthlyIncome, incomeDay, buckets, currentRemaining = null }, today) {
-  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }), 'income');
-  failIf(checkIncomeDay(incomeDay), 'incomeDay');
+export function completeSetup({ income, buckets, currentRemaining = null }, today) {
+  const schedule = checkedSchedule(income);
   if (currentRemaining !== null) failIf(checkAmount(currentRemaining, { allowZero: true, label: 'Sisa uang periode ini' }), 'remaining');
   failIf(checkBuckets(buckets), 'buckets');
   commit((d) => {
-    d.settings.monthlyIncome = monthlyIncome;
-    d.settings.incomeDay = incomeDay;
+    applySchedule(d.settings, schedule);
     d.settings.setupDate = today;
     d.buckets = buckets.map(cleanBucket);
     d.incomeOverrides = {};
-    if (currentRemaining !== null) d.incomeOverrides[getPeriod(today, incomeDay).start] = currentRemaining;
+    d.incomeDelays = {};
+    if (currentRemaining !== null) {
+      const period = getPeriod(today, schedule[0].day);
+      const comingLater = schedule
+        .map((i) => ({ id: i.id, date: installmentDate(period, i.day), amount: i.amount }))
+        .filter((i) => i.date > today);
+      const now = currentRemaining > 0 ? [{ id: makeId('k'), date: period.start, amount: currentRemaining }] : [];
+      d.incomeOverrides[period.start] = { installments: [...now, ...comingLater] };
+    }
     d.setupDone = true;
   });
 }
@@ -259,29 +292,89 @@ export function deleteExpense(id) {
   });
 }
 
-/* ------------------------------- settings ------------------------------- */
+/* ---------------------------- income schedule ---------------------------- */
+
+const sameSchedule = (a, b) => a.length === b.length && a.every((x, i) => x.day === b[i].day && x.amount === b[i].amount);
 
 /**
- * Change the monthly amount and/or the income day.
- * Returns a list of short notes about side effects (to show the user).
+ * "Jadwal Uang Masuk": save a new monthly schedule { total, installments: [{ id?, day, amount }] }.
+ * Past periods that already have expenses keep their old installments, so their
+ * summaries don't change. Returns a list of short notes about side effects.
  */
-export function updateIncomeSettings({ monthlyIncome, incomeDay }, today) {
-  failIf(checkAmount(monthlyIncome, { label: 'Uang bulanan' }), 'income');
-  failIf(checkIncomeDay(incomeDay), 'incomeDay');
+export function updateIncomeSchedule(income, today) {
+  const schedule = checkedSchedule(income);
   return commit((d) => {
     const notes = [];
-    if (monthlyIncome !== d.settings.monthlyIncome) {
-      const before = Object.keys(d.incomeOverrides).length;
-      d.incomeOverrides = freezePastIncome(d, today, d.settings.monthlyIncome); // uses the OLD income day
-      if (Object.keys(d.incomeOverrides).length > before) notes.push('Periode sebelumnya tetap memakai jumlah lama.');
-      d.settings.monthlyIncome = monthlyIncome;
+    const oldStartDay = periodStartDay(d);
+    if (!sameSchedule(incomeSchedule(d), schedule)) {
+      const before = new Set(Object.keys(d.incomeOverrides));
+      d.incomeOverrides = freezePastIncome(d, today); // uses the OLD schedule
+      const frozen = Object.keys(d.incomeOverrides).filter((key) => !before.has(key));
+      for (const key of frozen) delete d.incomeDelays[key]; // their real dates are now saved in the period itself
+      if (frozen.length) notes.push('Periode sebelumnya tetap memakai jadwal lama.');
     }
-    if (incomeDay !== d.settings.incomeDay) {
-      Object.assign(d, remapPeriodKeys(d, incomeDay));
-      d.settings.incomeDay = incomeDay;
-      notes.push('Periode disusun ulang mengikuti tanggal baru.');
+    applySchedule(d.settings, schedule);
+    if (schedule[0].day !== oldStartDay) {
+      Object.assign(d, remapPeriodKeys(d, schedule[0].day));
+      notes.push('Periode disusun ulang mengikuti tanggal awal yang baru.');
     }
     return notes;
+  });
+}
+
+/** "Cara hitung": 'hati-hati' (only money that has arrived) or 'total' (the whole month). */
+export function setCalcMode(mode) {
+  if (!CALC_MODES.includes(mode)) fail('Pilih cara hitung.');
+  commit((d) => {
+    d.settings.calcMode = mode;
+  });
+}
+
+/**
+ * The special income of one period ("Ubah uang masuk periode ini"):
+ * { total, installments: [{ id?, date, amount }] } with dates inside that period,
+ * or null to use the normal schedule again. Late installments of that period are forgotten.
+ */
+export function setPeriodIncome(periodStart, income) {
+  failIf(checkDate(periodStart));
+  const period = getPeriod(periodStart, periodStartDay(data));
+  if (period.start !== periodStart) fail('Periode ini tidak ditemukan.');
+  let installments = null;
+  if (income !== null) {
+    const problem = checkPeriodIncome(income, period);
+    if (problem) fail(problem.message, problem.field);
+    installments = income.installments
+      .map((i) => ({ id: i.id || makeId('k'), date: i.date, amount: i.amount }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+  commit((d) => {
+    if (installments === null) delete d.incomeOverrides[periodStart];
+    else d.incomeOverrides[periodStart] = { installments };
+    delete d.incomeDelays[periodStart];
+  });
+}
+
+/**
+ * "Belum masuk, geser tanggal": an installment of the current period has not
+ * arrived; it counts as not received until `newDate` (later, inside the period).
+ */
+export function delayInstallment(periodStart, installmentId, newDate, today) {
+  const period = getPeriod(periodStart, periodStartDay(data));
+  const installment = periodInstallments(data, period).find((i) => i.id === installmentId);
+  if (period.start !== periodStart || !installment) fail('Uang masuk ini tidak ditemukan.');
+  failIf(checkDelay(installment, newDate, period, today), 'date');
+  commit((d) => {
+    d.incomeDelays[periodStart] = { ...(d.incomeDelays[periodStart] || {}), [installmentId]: newDate };
+  });
+}
+
+/** Undo "geser tanggal": the installment is due on its planned date again. */
+export function undoDelay(periodStart, installmentId) {
+  commit((d) => {
+    const delays = d.incomeDelays[periodStart];
+    if (!delays) return;
+    delete delays[installmentId];
+    if (!Object.keys(delays).length) delete d.incomeDelays[periodStart];
   });
 }
 
@@ -408,17 +501,7 @@ export function deleteRecurring(id) {
   });
 }
 
-/* ------------------------- income and savings ------------------------- */
-
-/** Set a special income for one period, or remove it with amount = null. */
-export function setIncomeOverride(periodStart, amount) {
-  failIf(checkDate(periodStart));
-  if (amount !== null) failIf(checkAmount(amount, { allowZero: true, label: 'Pemasukan' }), 'amount');
-  commit((d) => {
-    if (amount === null) delete d.incomeOverrides[periodStart];
-    else d.incomeOverrides[periodStart] = amount;
-  });
-}
+/* -------------------------------- savings -------------------------------- */
 
 /** "Pindahkan sisa ke Tabungan": record the leftover of a finished period (once). */
 export function moveLeftoverToSavings(period, amount, today) {

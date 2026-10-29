@@ -1,24 +1,26 @@
-// Ringkasan: totals of one period, per bucket and per wallet, and "Pindahkan sisa ke Tabungan".
+// Ringkasan: totals of one period, its installments (received or not), per
+// bucket and per wallet, and "Pindahkan sisa ke Tabungan".
 
-import { append, h, icon, moneyInput, openDialog, confirmDialog, toast, errorMessage, alertDialog } from '../ui.js';
-import { screenHeader, card, money, bucketStatus, periodControls, keyed } from '../components.js';
+import { append, h, icon, confirmDialog, toast, errorMessage, alertDialog } from '../ui.js';
+import { screenHeader, card, money, bucketStatus, periodControls, keyed, progressBar } from '../components.js';
 import { periodSummary, leftoverMoveStatus } from '../logic.js';
-import { checkAmount } from '../data.js';
-import { formatRupiah, formatPeriod, formatDate } from '../format.js';
+import { formatRupiah, formatPeriod, formatDate, formatDateShort } from '../format.js';
+import { installmentBadge, openPeriodIncomeEditor } from '../income.js';
 import * as store from '../store.js';
 
 export const title = 'Ringkasan';
 
 export function render(main, ctx) {
-  const { data } = ctx;
+  const { data, today } = ctx;
   const { period, element: picker } = periodControls(ctx);
-  const s = periodSummary(data, period);
+  const s = periodSummary(data, period, today);
 
   append(
     main,
     keyed(screenHeader('Ringkasan', 'Uang masuk, keluar, dan sisa per periode.'), 'header'),
     keyed(picker, 'picker'),
-    keyed(totalsCard(s, ctx), 'card:totals'),
+    keyed(totalsCard(s), 'card:totals'),
+    keyed(incomeCard(s, ctx), 'card:installments'),
     keyed(savingsCard(s, ctx), 'card:savings'),
     keyed(card('Per pos', h('ul', { class: 'bucket-list' }, s.buckets.map((b) => bucketStatus(b, 'rb')))), 'card:buckets'),
     keyed(walletsCard(s), 'card:wallets'),
@@ -30,10 +32,10 @@ function line(label, value, extra = null, className = '') {
   return h('div', { class: `total-row ${className}` }, h('dt', null, label, extra), h('dd', null, value));
 }
 
-function totalsCard(s, ctx) {
+function totalsCard(s) {
   const negative = s.leftover < 0;
   return card(
-    null,
+    'Total periode',
     h(
       'dl',
       { class: 'totals' },
@@ -45,45 +47,41 @@ function totalsCard(s, ctx) {
       line('Pengeluaran tercatat', money(s.recordedTotal, '', 'ringkasan:recorded'), h('small', { class: 'muted' }, ` (${s.expenseCount} catatan)`)),
       line('Pengeluaran rutin', money(s.recurringTotal)),
       line('Total pengeluaran', money(s.totalSpent, '', 'ringkasan:total'), null, 'is-strong'),
-      line('Sisa', money(s.leftover, '', 'ringkasan:sisa'), negative ? h('span', { class: 'tag tag-danger' }, 'Melebihi anggaran') : null, 'is-strong is-big'),
+      line('Sisa', money(s.leftover, '', 'ringkasan:sisa'), negative ? h('span', { class: 'tag tag-danger' }, '▼ Melebihi anggaran') : null, 'is-strong is-big'),
     ),
     s.expenseCount === 0 ? h('p', { class: 'hint' }, 'Belum ada pengeluaran tercatat di periode ini.') : null,
-    h(
-      'button',
-      { type: 'button', class: 'btn btn-small', onclick: () => editIncome(s, ctx) },
-      icon('pencil'),
-      'Ubah pemasukan periode ini',
-    ),
   );
 }
 
-async function editIncome(s, ctx) {
-  const monthly = ctx.data.settings.monthlyIncome;
-  const input = moneyInput({ value: s.income, label: 'Pemasukan periode ini' });
-  const buttons = [{ label: 'Simpan', value: 'save', kind: 'primary' }];
-  if (s.incomeIsOverride) buttons.push({ label: 'Pakai jumlah biasa', value: 'reset' });
-  buttons.push({ label: 'Batal', value: 'cancel' });
-  const answer = await openDialog({
-    title: 'Pemasukan periode ini',
-    body: [
-      h('p', null, `Untuk periode ${formatPeriod(s.period)} saja, misalnya kalau bulan ini dapat kiriman tambahan. Periode lain tetap memakai uang bulanan biasa (${formatRupiah(monthly)}).`),
-      input.element,
-    ],
-    buttons,
-    validate: (value) => (value === 'save' ? checkAmount(input.getValue(), { allowZero: true, label: 'Pemasukan' }) : ''),
-  });
-  try {
-    if (answer === 'save') {
-      const amount = input.getValue();
-      store.setIncomeOverride(s.period.start, amount === monthly ? null : amount);
-      toast('Pemasukan periode ini disimpan.', 'success');
-    } else if (answer === 'reset') {
-      store.setIncomeOverride(s.period.start, null);
-      toast('Kembali memakai uang bulanan biasa.', 'success');
-    }
-  } catch (error) {
-    alertDialog({ title: 'Gagal menyimpan', message: errorMessage(error) });
-  }
+/** The period's installments with the dates they arrived, and the total vs what has arrived. */
+function incomeCard(s, ctx) {
+  const percent = s.income > 0 ? Math.floor((s.received / s.income) * 100) : 0;
+  const rows = s.installments.map((inst) =>
+    h(
+      'li',
+      { class: `inst-row is-${inst.state}`, 'data-key': `ri:${inst.id}` },
+      h('span', { class: 'inst-date' }, inst.delayed ? `${formatDateShort(inst.date)} (jadwal ${formatDateShort(inst.plannedDate)})` : formatDateShort(inst.date)),
+      h('span', { class: 'inst-amount' }, formatRupiah(inst.amount)),
+      installmentBadge(inst),
+    ),
+  );
+  return card(
+    'Uang masuk',
+    rows.length ? h('ul', { class: 'inst-list' }, rows) : h('p', { class: 'muted' }, 'Tidak ada uang masuk di periode ini.'),
+    h(
+      'div',
+      { class: 'inst-progress' },
+      h('p', { class: 'inst-progress-text' }, h('span', { class: 'label' }, 'Masuk'), ' ', money(s.received), ' / ', money(s.income), ` (${percent}%)`),
+      progressBar(s.received, s.income, `Uang masuk ${formatRupiah(s.received)} dari ${formatRupiah(s.income)}`, `ri:progress:${s.period.start}`, 'amber'),
+    ),
+    h(
+      'button',
+      { type: 'button', class: 'btn btn-small', id: 'edit-period-income', onclick: () => openPeriodIncomeEditor(ctx, s.period) },
+      icon('pencil'),
+      'Ubah uang masuk periode ini',
+    ),
+    h('p', { class: 'hint' }, s.incomeIsOverride ? 'Periode ini memakai uang masuk khusus; jadwal bulanan tidak berubah.' : 'Mengikuti jadwal bulanan. Ubah di sini kalau periode ini beda.'),
+  );
 }
 
 function savingsCard(s, ctx) {

@@ -2,9 +2,10 @@
 // make-icons.mjs — draws the app icons and saves them as PNG files in /icons.
 // Pure Node.js, no extra packages. Run it with:  npm run icons
 //
-// Design: a teal rounded square with a white "Rp" drawn with smooth lines.
-// The shapes are described with "distance functions", which gives clean,
-// anti-aliased edges at every size.
+// Design: a black square with an amber monospace "Rp_" (like a terminal
+// prompt with a cursor). The shapes are described with "distance functions",
+// which gives clean, anti-aliased edges at every size. No transparency, so
+// iPhone and Android show it as it is.
 // -----------------------------------------------------------------------------
 
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -67,6 +68,14 @@ function encodePng(width, height, pixels, withAlpha) {
 
 /* --------------------------- shapes (0..100 grid) --------------------------- */
 
+/** Signed distance to an axis-aligned box (negative inside): square corners, like a terminal font. */
+function box(px, py, x0, y0, x1, y1) {
+  const qx = Math.max(x0 - px, px - x1);
+  const qy = Math.max(y0 - py, py - y1);
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0);
+}
+
+/** Distance to a straight line segment (for the diagonal leg of the R). */
 function distanceToSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
   const dy = by - ay;
@@ -74,85 +83,70 @@ function distanceToSegment(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-/** Distance to an arc of a circle between two angles (radians, y pointing down). */
-function distanceToArc(px, py, cx, cy, r, from, to) {
-  const angle = Math.atan2(py - cy, px - cx);
-  if (angle >= from && angle <= to) return Math.abs(Math.hypot(px - cx, py - cy) - r);
-  const d1 = Math.hypot(px - (cx + r * Math.cos(from)), py - (cy + r * Math.sin(from)));
-  const d2 = Math.hypot(px - (cx + r * Math.cos(to)), py - (cy + r * Math.sin(to)));
-  return Math.min(d1, d2);
-}
-
-/** Signed distance to a rounded square covering the whole 0..100 grid. */
-function roundedSquare(px, py, radius) {
-  const qx = Math.abs(px - 50) - (50 - radius);
-  const qy = Math.abs(py - 50) - (50 - radius);
-  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - radius;
-}
-
-/** Signed distance to the white "Rp" mark (centerlines + stroke). */
-function rpMark(px, py, stroke) {
-  const x = px + 1.5; // small shift so the mark looks centered
-  const y = py + 3;
-  const lines = [
-    distanceToSegment(x, y, 24, 30, 24, 70), // R: stem
-    distanceToSegment(x, y, 24, 30, 35, 30), // R: top of bowl
-    distanceToArc(x, y, 35, 40, 10, -Math.PI / 2, Math.PI / 2), // R: bowl
-    distanceToSegment(x, y, 35, 50, 24, 50), // R: bottom of bowl
-    distanceToSegment(x, y, 33, 50, 45, 70), // R: leg
-    distanceToSegment(x, y, 55, 46, 55, 84), // p: stem
-    Math.abs(Math.hypot(x - 67, y - 58) - 12), // p: bowl
+/** Signed distance to the "Rp_" mark. `s` is the stroke thickness. */
+function rpMark(px, py, s) {
+  const x = px + 3; // small shift so the mark looks centered
+  const y = py + 6;
+  const h = s / 2;
+  const parts = [
+    // R
+    box(x, y, 14, 28, 14 + s, 72), // stem
+    box(x, y, 14, 28, 38, 28 + s), // top
+    box(x, y, 38 - s, 28, 38, 50), // right side of the bowl
+    box(x, y, 14, 50 - s, 38, 50), // middle
+    Math.max(distanceToSegment(x, y, 26, 44, 40, 76) - h, y - 72, 50 - s - y), // leg, cut flat at top and bottom
+    // p
+    box(x, y, 46, 44, 46 + s, 86), // stem
+    box(x, y, 46, 44, 68, 44 + s), // top of the bowl
+    box(x, y, 68 - s, 44, 68, 70), // right of the bowl
+    box(x, y, 46, 70 - s, 68, 70), // bottom of the bowl
+    // _ (the cursor)
+    box(x, y, 74, 64, 90, 72),
   ];
-  return Math.min(...lines) - stroke / 2;
+  return Math.min(...parts);
 }
 
 /* -------------------------------- drawing -------------------------------- */
 
-const TOP_LEFT = [22, 166, 150];
-const BOTTOM_RIGHT = [11, 94, 87];
+const BACKGROUND = [0, 0, 0]; // #000000
+const AMBER = [255, 154, 31]; // #FF9A1F
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 /**
  * size       – pixels
- * rounded    – true: transparent rounded corners; false: full square (iPhone / maskable)
- * markScale  – how big the "Rp" is (maskable icons need extra margin)
+ * markScale  – how big the mark is (maskable icons need extra margin)
  * stroke     – line thickness on the 0..100 grid
  */
-function drawIcon({ size, rounded, markScale, stroke }) {
+function drawIcon({ size, markScale, stroke }) {
   const pixels = new Uint8Array(size * size * 4);
   const unit = 100 / size; // one pixel, measured on the 0..100 grid
   for (let j = 0; j < size; j++) {
     for (let i = 0; i < size; i++) {
       const gx = ((i + 0.5) / size) * 100;
       const gy = ((j + 0.5) / size) * 100;
-      const background = rounded ? clamp01(0.5 - roundedSquare(gx, gy, 22) / unit) : 1;
       // The mark is drawn on a grid scaled around the center.
       const mx = 50 + (gx - 50) / markScale;
       const my = 50 + (gy - 50) / markScale;
       const mark = clamp01(0.5 - rpMark(mx, my, stroke) / (unit / markScale));
-      const t = clamp01((gx + gy) / 200);
       const k = (j * size + i) * 4;
-      for (let c = 0; c < 3; c++) {
-        const base = TOP_LEFT[c] + (BOTTOM_RIGHT[c] - TOP_LEFT[c]) * t;
-        pixels[k + c] = Math.round(base + (255 - base) * mark);
-      }
-      pixels[k + 3] = Math.round(255 * background);
+      for (let c = 0; c < 3; c++) pixels[k + c] = Math.round(BACKGROUND[c] + (AMBER[c] - BACKGROUND[c]) * mark);
+      pixels[k + 3] = 255;
     }
   }
   return pixels;
 }
 
 const ICONS = [
-  { file: 'icon-192.png', size: 192, rounded: true, markScale: 1, stroke: 9, alpha: true },
-  { file: 'icon-512.png', size: 512, rounded: true, markScale: 1, stroke: 9, alpha: true },
-  { file: 'icon-maskable-512.png', size: 512, rounded: false, markScale: 0.78, stroke: 9, alpha: false },
-  { file: 'apple-touch-icon.png', size: 180, rounded: false, markScale: 0.92, stroke: 9, alpha: false },
-  { file: 'favicon-32.png', size: 32, rounded: true, markScale: 1.05, stroke: 11, alpha: true },
+  { file: 'icon-192.png', size: 192, markScale: 0.86, stroke: 7 },
+  { file: 'icon-512.png', size: 512, markScale: 0.86, stroke: 7 },
+  { file: 'icon-maskable-512.png', size: 512, markScale: 0.66, stroke: 7 },
+  { file: 'apple-touch-icon.png', size: 180, markScale: 0.8, stroke: 7 },
+  { file: 'favicon-32.png', size: 32, markScale: 1, stroke: 9 },
 ];
 
 mkdirSync(OUT_DIR, { recursive: true });
 for (const icon of ICONS) {
   const pixels = drawIcon(icon);
-  writeFileSync(join(OUT_DIR, icon.file), encodePng(icon.size, icon.size, pixels, icon.alpha));
+  writeFileSync(join(OUT_DIR, icon.file), encodePng(icon.size, icon.size, pixels, false));
   console.log(`icons/${icon.file}  ${icon.size}×${icon.size}`);
 }

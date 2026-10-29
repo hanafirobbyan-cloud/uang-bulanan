@@ -17,6 +17,7 @@ try {
     day: 'numeric',
     hour: 'numeric',
     minute: 'numeric',
+    second: 'numeric',
     hourCycle: 'h23',
   });
 } catch {
@@ -33,6 +34,7 @@ function nowParts(now = new Date()) {
       day: Number(parts.day),
       hour: Number(parts.hour) % 24,
       minute: Number(parts.minute),
+      second: Number(parts.second),
     };
   }
   return {
@@ -41,6 +43,7 @@ function nowParts(now = new Date()) {
     day: now.getDate(),
     hour: now.getHours(),
     minute: now.getMinutes(),
+    second: now.getSeconds(),
   };
 }
 
@@ -54,4 +57,10 @@ export function todayStr(now) {
 export function nowStamp(now) {
   const p = nowParts(now);
   return `${toDateStr(p.year, p.month, p.day)} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+}
+
+/** The time in Jakarta with seconds, e.g. '14:30:05' (the clock in the status bar). */
+export function nowTime(now) {
+  const p = nowParts(now);
+  return [p.hour, p.minute, p.second].map((n) => String(n).padStart(2, '0')).join(':');
 }

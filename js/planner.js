@@ -20,7 +20,7 @@
 //   }
 // -----------------------------------------------------------------------------
 
-import { addDays, daysBetween, weekday, parseDateStr, toDateStr, daysInMonth, getPeriod } from './logic.js';
+import { addDays, daysBetween, weekday, parseDateStr, toDateStr, daysInMonth, getPeriod, periodStartDay } from './logic.js';
 import { checkAmount, checkName, checkDate, cleanName } from './data.js';
 
 export const WEEKEND_WEIGHT_DEFAULT = 150;
@@ -44,15 +44,17 @@ export function isWeekend(date) {
 /**
  * The last day of a plan for each "Sampai kapan?" choice:
  *   'month'  – the last day of the start date's calendar month
- *   'income' – the day before the next income day (end of the budget period)
+ *   'income' – the day before the next money comes in: `incomeEnd` when given
+ *              (the day before the next installment, see nextIncomeEnd() in
+ *              logic.js), otherwise the end of the budget period
  *   'custom' – the date the user picked
  */
-export function planEndDate(mode, startDate, incomeDay, customDate = null) {
+export function planEndDate(mode, startDate, incomeDay, customDate = null, incomeEnd = null) {
   if (mode === 'month') {
     const { year, month } = parseDateStr(startDate);
     return toDateStr(year, month, daysInMonth(year, month));
   }
-  if (mode === 'income') return getPeriod(startDate, incomeDay).end;
+  if (mode === 'income') return incomeEnd || getPeriod(startDate, incomeDay).end;
   return customDate;
 }
 
@@ -333,7 +335,7 @@ export function savingTips(report, data, today) {
     .slice(0, 3)
     .map((o) => ({ name: o.name, amount: o.amount, perDayGain: Math.floor(o.amount / daysLeft) }));
 
-  const period = getPeriod(today, data.settings.incomeDay);
+  const period = getPeriod(today, periodStartDay(data));
   const wants = wantBucketIds(data.buckets);
   const bucketName = new Map(data.buckets.map((b) => [b.id, b.name]));
   const groups = new Map();

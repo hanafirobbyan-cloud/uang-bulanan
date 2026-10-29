@@ -4,7 +4,7 @@
 import { append, h, icon, moneyInput, chipGroup, openSheet, confirmDialog, toast, field, uniqueId } from '../ui.js';
 import { screenHeader, card, money, emptyState, notice, keyed } from '../components.js';
 import { MAX_NAME_LENGTH } from '../data.js';
-import { getPeriod } from '../logic.js';
+import { getPeriod, periodStartDay } from '../logic.js';
 import { formatRupiah, formatDate, formatDateShort, formatPeriod } from '../format.js';
 import * as store from '../store.js';
 
@@ -40,7 +40,7 @@ function recurringRow(bill, data, ctx) {
   let status = '';
   if (bill.endDate) status = ` · nonaktif sejak ${formatDate(bill.endDate)}`;
   else if (bill.startDate > ctx.today) status = ` · mulai ${formatDate(bill.startDate)}`;
-  if (bill.dueDay) status += ` · jatuh tempo tgl ${bill.dueDay}`;
+  status += bill.dueDay ? ` · jatuh tempo tgl ${bill.dueDay}` : ' · jatuh tempo awal periode';
   const sub = `${bucket ? bucket.name : '-'} · ${wallet ? wallet.name : '-'}${status}`;
   return h(
     'li',
@@ -69,12 +69,12 @@ function openRecurringForm(ctx, bill = null) {
   const dueSelect = h(
     'select',
     { class: 'input', id: dueId, value: bill && bill.dueDay ? String(bill.dueDay) : '' },
-    h('option', { value: '' }, 'Tidak diatur'),
+    h('option', { value: '' }, `Default: awal periode (tgl ${periodStartDay(data)})`),
     Array.from({ length: 31 }, (_, i) => h('option', { value: String(i + 1) }, `Tanggal ${i + 1}`)),
   );
 
   // New bills: count from this period, or from the next one (if this period's bill is already paid).
-  const current = getPeriod(ctx.today, data.settings.incomeDay);
+  const current = getPeriod(ctx.today, periodStartDay(data));
   const startChoice = isEdit
     ? null
     : chipGroup({
@@ -141,10 +141,15 @@ function openRecurringForm(ctx, bill = null) {
       h('div', { class: 'field' }, h('label', { class: 'field-label', for: amount.input.id }, 'Jumlah per periode'), amount.element),
       bucketChoice.element,
       walletChoice.element,
-      field({ label: 'Tanggal jatuh tempo (opsional)', control: dueSelect, forId: dueId, hint: 'Dipakai Rencana Cukup untuk tahu tagihan mana yang jatuh tempo sebelum tanggal akhir.' }),
+      field({
+        label: 'Tanggal jatuh tempo (opsional)',
+        control: dueSelect,
+        forId: dueId,
+        hint: 'Mode Hati-hati menyisihkan tagihan ini mulai dari uang masuk sebelum jatuh tempo. Rencana Cukup juga memakainya. Default: disisihkan sejak awal periode.',
+      }),
       startChoice
         ? [startChoice.element, h('p', { class: 'hint' }, 'Pilih "Periode berikutnya" kalau tagihan periode ini sudah dibayar, supaya tidak terhitung dua kali.')]
-        : h('p', { class: 'hint' }, `Dihitung sejak periode ${formatPeriod(getPeriod(bill.startDate, data.settings.incomeDay))}.`),
+        : h('p', { class: 'hint' }, `Dihitung sejak periode ${formatPeriod(getPeriod(bill.startDate, periodStartDay(data)))}.`),
     ],
     footer,
     fields: { name: nameInput, amount: amount.element, bucket: bucketChoice.element, wallet: walletChoice.element },

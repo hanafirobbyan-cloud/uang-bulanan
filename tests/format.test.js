@@ -1,7 +1,7 @@
 // Tests for js/format.js (Indonesian money and date text).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatRupiah, formatNumber, parseMoney, formatDateLong, formatDate, formatDateShort, formatDayHeading, formatPeriod, formatStamp } from '../js/format.js';
+import { formatRupiah, formatNumber, parseMoney, formatDateLong, formatDate, formatDateShort, formatDayHeading, formatPeriod, formatStamp, formatDelta, formatCompact } from '../js/format.js';
 
 const NBSP = '\u00a0'; // non-breaking space
 
@@ -44,4 +44,17 @@ test('timestamps from backup files', () => {
   assert.equal(formatStamp('2026-10-25 14:30'), '25 Oktober 2026 pukul 14.30');
   assert.equal(formatStamp('2026-10-25'), '25 Oktober 2026');
   assert.equal(formatStamp(''), '');
+});
+
+test('changes with a sign, and short amounts for the chart', () => {
+  assert.equal(formatDelta(5_000), `+Rp${NBSP}5.000`);
+  assert.equal(formatDelta(-1_250_000), `\u2212Rp${NBSP}1.250.000`);
+  assert.equal(formatDelta(0), `Rp${NBSP}0`);
+  assert.equal(formatCompact(3_000_000), '3 jt');
+  assert.equal(formatCompact(1_250_000), '1,25 jt');
+  assert.equal(formatCompact(1_999_999), '1,99 jt');
+  assert.equal(formatCompact(850_500), '850 rb');
+  assert.equal(formatCompact(-40_000), '-40 rb');
+  assert.equal(formatCompact(999), '999');
+  assert.equal(formatCompact(1_000_000_000), '1 M');
 });

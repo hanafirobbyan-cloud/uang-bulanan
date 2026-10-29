@@ -2,7 +2,7 @@
 
 import { h, moneyInput, chipGroup, openSheet, confirmDialog, toast, field, uniqueId } from '../ui.js';
 import { formatRupiah, formatDateLong, formatPeriod, formatDate } from '../format.js';
-import { getPeriod, isValidDateStr } from '../logic.js';
+import { getPeriod, isValidDateStr, periodStartDay } from '../logic.js';
 import { MAX_NOTE_LENGTH } from '../data.js';
 import * as store from '../store.js';
 
@@ -52,7 +52,7 @@ export function openExpenseForm(ctx, { expense = null, prefill = {}, onSaved = n
       dateHint.textContent = '';
       return;
     }
-    const incomeDay = store.getData().settings.incomeDay;
+    const incomeDay = periodStartDay(store.getData());
     const period = getPeriod(value, incomeDay);
     const inCurrent = period.start === getPeriod(ctx.today, incomeDay).start;
     dateHint.textContent = formatDateLong(value) + (inCurrent ? '' : ` · masuk periode ${formatPeriod(period)}`);

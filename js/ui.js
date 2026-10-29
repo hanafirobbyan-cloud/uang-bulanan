@@ -1,7 +1,8 @@
 // -----------------------------------------------------------------------------
-// ui.js — small helpers for building the screen: elements, icons, dialogs,
-// sheets, toasts, money inputs, choice "chips", segmented controls, steppers
-// and swipe-to-delete rows. Nothing here knows about budgets.
+// ui.js — small helpers for building the screen: elements, icons, terminal
+// windows (dialogs and form "sheets"), the one-line status message (toasts),
+// money inputs, choice "chips", segmented controls, steppers and
+// swipe-to-delete rows. Nothing here knows about budgets.
 // Animations come from motion.js.
 // -----------------------------------------------------------------------------
 
@@ -101,14 +102,10 @@ export function icon(name, className = 'icon') {
 }
 
 /* -------------------------------- toasts -------------------------------- */
+// A one-line status message at the bottom of the screen, like a terminal:
+// "OK  Tersimpan: Rp 25.000 · Kebutuhan".
 
-function checkMark() {
-  const span = document.createElement('span');
-  span.className = 'toast-check';
-  span.setAttribute('aria-hidden', 'true');
-  span.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" focusable="false"><circle cx="12" cy="12" r="11"/><path d="m7 12.5 3.2 3.2L17 8.8"/></svg>';
-  return span;
-}
+const TOAST_LABELS = { success: 'OK', error: 'ERR', info: 'INFO' };
 
 /** Make sure the toast area is shown on top of everything (it is a "popover" where supported). */
 function showToastArea(region) {
@@ -126,9 +123,9 @@ function showToastArea(region) {
 }
 
 /**
- * A short message that slides in at the bottom. kind: 'info' | 'success' | 'error'.
- * Success messages get an animated checkmark. With `action` ({ label, onClick }),
- * the toast gets a button, e.g. "Urungkan" (undo).
+ * A short status message at the bottom. kind: 'info' | 'success' | 'error'.
+ * It starts with OK / ERR / INFO, so the meaning never depends on color alone.
+ * With `action` ({ label, onClick }), it gets a key, e.g. "Urungkan" (undo).
  */
 export function toast(message, kind = 'info', { action = null, ms = null } = {}) {
   const region = document.getElementById('toasts');
@@ -138,7 +135,7 @@ export function toast(message, kind = 'info', { action = null, ms = null } = {})
   const item = h(
     'div',
     { class: `toast toast-${kind}${action ? ' has-action' : ''}`, role: kind === 'error' ? 'alert' : null },
-    kind === 'success' ? checkMark() : null,
+    h('span', { class: 'toast-label' }, TOAST_LABELS[kind] || TOAST_LABELS.info),
     h('span', { class: 'toast-text' }, message),
     action
       ? h(
@@ -168,7 +165,7 @@ export function toast(message, kind = 'info', { action = null, ms = null } = {})
           /* not important */
         }
       }
-    }, 240);
+    }, 140);
   }
   region.append(item);
   showToastArea(region);
@@ -221,7 +218,12 @@ export function openDialog({ title, body = [], buttons = [{ label: 'OK', value: 
     const form = h(
       'form',
       { class: 'dialog-form', novalidate: true },
-      h('h2', { class: 'dialog-title', id: titleId, text: title }),
+      h(
+        'header',
+        { class: 'window-bar' },
+        h('h2', { class: 'dialog-title', id: titleId, text: title }),
+        h('button', { type: 'button', class: 'window-close', 'aria-label': 'Tutup', onclick: () => finish('') }, h('kbd', null, 'ESC'), ' TUTUP'),
+      ),
       h('div', { class: 'dialog-body' }, asParagraphs(body), error),
       h(
         'div',
@@ -270,6 +272,9 @@ export function openDialog({ title, body = [], buttons = [{ label: 'OK', value: 
       }
     });
     showModal(dialog);
+    // Like before the terminal look: the main button gets the focus (Enter = OK), unless a button asks for it.
+    const start = form.querySelector('[autofocus]') || form.querySelector('.dialog-actions .btn');
+    if (start) start.focus({ preventScroll: true });
     openDialogAnimation(dialog, 'dialog');
   });
 }
@@ -293,8 +298,8 @@ export async function alertDialog({ title, message, buttonLabel = 'Mengerti' }) 
 }
 
 /**
- * Drag the sheet down by its top bar to close it (like iOS).
- * Pulling up resists (rubber band); a quick flick or a long drag closes it.
+ * Drag the window down by its title bar to close it (phones).
+ * It only moves down (no rubber band); a quick flick or a long drag closes it.
  */
 function enableDragToDismiss(dialog, handle, close) {
   let pointerId = null;
@@ -303,7 +308,7 @@ function enableDragToDismiss(dialog, handle, close) {
   let lastTime = 0;
   let velocity = 0;
   let dragging = false;
-  const offsetFor = (dy) => (dy >= 0 ? dy : -Math.min(40, Math.sqrt(-dy) * 4));
+  const offsetFor = (dy) => Math.max(0, dy);
 
   handle.addEventListener('pointerdown', (event) => {
     if (event.button > 0 || event.target.closest('button, a, input, select, textarea')) return;
@@ -347,16 +352,16 @@ function enableDragToDismiss(dialog, handle, close) {
     }
     const current = dialog.style.transform || 'translateY(0)';
     dialog.style.removeProperty('transform');
-    play(dialog, [{ transform: current }, { transform: 'translateY(0)' }], { duration: duration('sheet'), easing: ease('spring'), channel: 'open' });
+    play(dialog, [{ transform: current }, { transform: 'translateY(0)' }], { duration: duration('fast'), easing: ease('out'), channel: 'open' });
   };
   handle.addEventListener('pointerup', (event) => finish(event, false));
   handle.addEventListener('pointercancel', (event) => finish(event, true));
 }
 
 /**
- * A form window that slides up from the bottom (a centered window on big
- * screens), with "Batal" and the save button in its top bar, so they stay
- * visible above the iPhone keyboard. Drag the top bar down to close it.
+ * A form in a terminal window (full height on phones, centered on big screens).
+ * Its title bar holds "[ESC] TUTUP" and the save key, so they stay visible
+ * above the iPhone keyboard. On phones, drag the title bar down to close it.
  *   onSubmit(): save; throw an error to keep the sheet open and show the message.
  *   fields: { name: element } — the element to shake when an error has that field.
  * Must be called directly from a tap/click, so iOS opens the keyboard for an
@@ -367,11 +372,10 @@ export function openSheet({ title, submitLabel = 'Simpan', content = [], footer 
   const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
   const header = h(
     'header',
-    { class: 'sheet-header' },
-    h('span', { class: 'sheet-grabber', 'aria-hidden': 'true' }),
-    h('button', { type: 'button', class: 'btn btn-plain', onclick: () => close() }, 'Batal'),
+    { class: 'sheet-header window-bar' },
     h('h2', { class: 'sheet-title', id: titleId, text: title }),
-    h('button', { type: 'submit', class: 'btn btn-plain btn-plain-strong' }, submitLabel),
+    h('button', { type: 'button', class: 'window-close', 'aria-label': 'Tutup', onclick: () => close() }, h('kbd', null, 'ESC'), ' TUTUP'),
+    h('button', { type: 'submit', class: 'btn btn-primary btn-small sheet-submit' }, submitLabel),
   );
   const form = h(
     'form',
@@ -413,9 +417,15 @@ export function openSheet({ title, submitLabel = 'Simpan', content = [], footer 
   });
 
   showModal(dialog);
-  // Focus before the slide-up starts, so the iPhone keyboard opens without the page jumping.
+  // Focus before the window appears, so the iPhone keyboard opens without the page jumping.
+  // Without a field to start in, the title gets the focus (screen readers start reading there).
   const first = dialog.querySelector('[data-autofocus]');
+  const titleEl = dialog.querySelector('.sheet-title');
   if (first) first.focus({ preventScroll: true });
+  else if (titleEl) {
+    titleEl.tabIndex = -1;
+    titleEl.focus({ preventScroll: true });
+  }
   openDialogAnimation(dialog, 'sheet');
   enableDragToDismiss(dialog, header, close);
   return { close, showError, dialog };
@@ -600,7 +610,7 @@ document.addEventListener(
 );
 
 /**
- * iOS-style swipe left on a list row to reveal its action button (e.g. "Hapus").
+ * Swipe left on a list row to reveal its action button (e.g. "Hapus").
  * `row` contains the action (behind) and `content` (in front, the part that moves).
  * A tap on an open row just closes it. Vertical swipes still scroll the page.
  */
@@ -637,7 +647,7 @@ export function makeSwipeable(row, content) {
       openRow = null;
     }
     if (Math.abs(from - to) > 1) {
-      play(content, [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }], { duration: duration('page'), easing: ease('spring'), channel: 'swipe' });
+      play(content, [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }], { duration: duration('fast'), easing: ease('out'), channel: 'swipe' });
     }
   }
 
@@ -678,10 +688,7 @@ export function makeSwipeable(row, content) {
     if (dt > 0) velocity = 0.8 * ((event.clientX - lastX) / dt) + 0.2 * velocity;
     lastX = event.clientX;
     lastTime = event.timeStamp;
-    let x = startOffset + dx;
-    if (x > 0) x = Math.min(24, x * 0.25); // rubber band to the right
-    else if (x < -ACTION_WIDTH) x = -ACTION_WIDTH + (x + ACTION_WIDTH) * 0.35; // rubber band past the button
-    setOffset(x);
+    setOffset(Math.min(0, Math.max(-ACTION_WIDTH, startOffset + dx))); // stops at the edges: no rubber band
   });
   const end = (event) => {
     if (event.pointerId !== pointerId) return;

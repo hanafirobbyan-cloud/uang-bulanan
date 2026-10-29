@@ -44,7 +44,10 @@ export function registerServiceWorker() {
         });
       });
     })
-    .catch((error) => console.warn('Service worker tidak bisa dipasang:', error));
+    .catch((error) => {
+      // Offline, Safari cannot re-check sw.js; the installed version keeps working, so that is not a problem.
+      if (navigator.onLine !== false) console.warn('Service worker tidak bisa dipasang:', error);
+    });
 
   // iPhone home-screen apps are often resumed instead of reopened,
   // so also look for a new version whenever the app comes back to the front.

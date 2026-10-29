@@ -20,16 +20,25 @@ function validData() {
   data.setupDone = true;
   data.settings.monthlyIncome = 3_000_000;
   data.settings.incomeDay = 25;
+  data.settings.incomeSchedule = [
+    { id: 'i-1', day: 25, amount: 2_000_000 },
+    { id: 'i-2', day: 28, amount: 1_000_000 },
+  ];
+  data.settings.calcMode = 'total';
   data.settings.setupDate = '2026-10-01';
   data.expenses.push({ id: 'e1', amount: 25_000, bucketId: 'kebutuhan', walletId: 'tunai', date: '2026-10-25', note: 'Makan', createdAt: 1 });
   data.recurring.push({ id: 'r1', name: 'Kos', amount: 1_000_000, bucketId: 'kebutuhan', walletId: 'bank', startDate: '2026-10-01', endDate: null, dueDay: 5 });
-  data.incomeOverrides['2026-09-25'] = 3_500_000;
+  data.incomeOverrides['2026-09-25'] = { installments: [{ id: 'k-1', date: '2026-09-25', amount: 3_000_000 }, { id: 'k-2', date: '2026-10-10', amount: 500_000 }] };
+  data.incomeDelays['2026-10-25'] = { 'i-2': '2026-11-02' };
   data.savings.push({ id: 's1', periodStart: '2026-09-25', amount: 100_000, date: '2026-10-25' });
   return data;
 }
 
 test('defaults: four buckets totaling 100% and five wallets', () => {
   const data = createEmptyData();
+  assert.equal(data.schemaVersion, 3);
+  assert.deepEqual(data.settings.incomeSchedule, []);
+  assert.equal(data.settings.calcMode, 'hati-hati');
   assert.equal(percentTotal(data.buckets), 100);
   assert.deepEqual(data.buckets.map((b) => [b.name, b.percent, b.spendable]), [
     ['Kebutuhan', 50, true],
@@ -100,7 +109,7 @@ test('broken records are skipped or repaired, with messages', () => {
   assert.equal(fixed.expenses.length, 3);
   assert.equal(fixed.expenses.find((e) => e.id === 'lost').bucketId, 'kebutuhan');
   assert.equal(new Set(fixed.expenses.map((e) => e.id)).size, 3);
-  assert.equal(fixed.settings.incomeDay, 1);
+  assert.equal(fixed.settings.incomeDay, 25, 'the earliest installment day of the schedule');
   assert.ok(problems.some((p) => p.includes('2 pengeluaran tidak valid')));
   assert.ok(problems.some((p) => p.includes('Tanggal uang masuk')));
   assert.ok(problems.some((p) => p.includes('dipindahkan')));

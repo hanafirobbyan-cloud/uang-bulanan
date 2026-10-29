@@ -2,7 +2,7 @@
 
 import { h, icon, moneyInput, segmented, stepper, expandable, openSheet, openDialog, alertDialog, toast, field, uniqueId } from '../ui.js';
 import { statusBadge } from '../components.js';
-import { dailyBudget, isValidDateStr, daysBetween } from '../logic.js';
+import { cashOnHand, isValidDateStr, daysBetween, periodStartDay, nextIncomeEnd } from '../logic.js';
 import { planEndDate, planReport, nextDueDate, WEEKEND_WEIGHT_DEFAULT, WEEKEND_WEIGHT_MIN, WEEKEND_WEIGHT_MAX, WEEKEND_WEIGHT_STEP } from '../planner.js';
 import { MAX_NAME_LENGTH } from '../data.js';
 import { formatRupiah, formatDate, formatDateLong, formatDateShort } from '../format.js';
@@ -20,15 +20,16 @@ export function openPlanForm(ctx, { plan = null } = {}) {
   const data = store.getData();
   const isEdit = Boolean(plan);
   const startDate = isEdit ? plan.startDate : ctx.today;
-  const incomeDay = data.settings.incomeDay;
+  const incomeDay = periodStartDay(data);
+  const incomeEnd = nextIncomeEnd(data, startDate); // "Sampai uang masuk berikutnya": the day before the next installment
   const state = {
     endMode: isEdit ? plan.endMode : 'income',
-    customEnd: isEdit && plan.endMode === 'custom' ? plan.endDate : planEndDate('income', startDate, incomeDay),
+    customEnd: isEdit && plan.endMode === 'custom' ? plan.endDate : planEndDate('income', startDate, incomeDay, null, incomeEnd),
     pattern: isEdit ? plan.pattern : 'even',
     weekendWeight: isEdit ? plan.weekendWeight : WEEKEND_WEIGHT_DEFAULT,
     obligations: isEdit ? plan.obligations.map((o) => ({ ...o })) : [],
   };
-  const endDate = () => (state.endMode === 'custom' ? state.customEnd : planEndDate(state.endMode, startDate, incomeDay));
+  const endDate = () => (state.endMode === 'custom' ? state.customEnd : planEndDate(state.endMode, startDate, incomeDay, null, incomeEnd));
 
   /* ---- 1. money ---- */
   const money = moneyInput({ value: isEdit ? plan.money : null, id: uniqueId('plan-money'), large: true, autofocus: !isEdit, label: 'Uang yang kupunya sekarang', onInput: updatePreview });
@@ -36,9 +37,9 @@ export function openPlanForm(ctx, { plan = null } = {}) {
     ? null
     : h('button', { type: 'button', class: 'btn btn-small', id: 'plan-fill', onclick: fillFromBudget }, 'Isi dari sisa anggaran');
   function fillFromBudget() {
-    const left = dailyBudget(store.getData(), ctx.today).remainingInPeriod;
-    money.setValue(Math.max(0, left));
-    toast(left > 0 ? `Diisi ${formatRupiah(left)}: sisa uang yang bisa dipakai periode ini.` : 'Sisa anggaran periode ini sudah habis.');
+    const cash = cashOnHand(store.getData(), ctx.today);
+    money.setValue(Math.max(0, cash));
+    toast(cash > 0 ? `Diisi ${formatRupiah(cash)}: uang di tangan sekarang (uang yang sudah masuk − pengeluaran − tagihan rutin yang sudah jatuh tempo).` : 'Uang di tangan sekarang sudah habis.');
   }
 
   /* ---- 2. until when ---- */
@@ -57,7 +58,7 @@ export function openPlanForm(ctx, { plan = null } = {}) {
     value: state.endMode,
     options: [
       { value: 'month', label: 'Akhir bulan' },
-      { value: 'income', label: 'Uang masuk berikutnya' },
+      { value: 'income', label: 'Sampai uang masuk berikutnya' },
       { value: 'custom', label: 'Tanggal sendiri' },
     ],
     onChange: (value) => {

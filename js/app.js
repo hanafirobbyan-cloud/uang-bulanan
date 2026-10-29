@@ -1,14 +1,16 @@
 // -----------------------------------------------------------------------------
 // app.js — starts the app: loads the data, shows the right screen, and wires
-// up navigation, animations, offline support/updates and the change of day.
+// up navigation (function keys, command line), animations, offline
+// support/updates and the change of day.
 //
 // Screens live in js/screens/. Each one exports `title` and
-// `render(main, ctx)`, where ctx = { data, today, ui, go, refresh }:
+// `render(main, ctx)`, where ctx = { data, today, ui, go, refresh, entering }:
 //   data       – the saved data (read-only; change it through store.js)
 //   today      – today's date in Jakarta, 'YYYY-MM-DD'
 //   ui         – things remembered while the app is open (chosen period, filters)
 //   go(r)      – open another screen, e.g. go('beranda')
-//   refresh(o) – redraw the current screen ({ slide: 'back' | 'forward' } to slide it)
+//   refresh(o) – redraw the current screen ({ slide: 'back' | 'forward' } to animate it)
+//   entering   – true when the screen was just opened (not a redraw after a change)
 // -----------------------------------------------------------------------------
 
 import * as store from './store.js';
@@ -17,6 +19,10 @@ import { todayStr } from './clock.js';
 import { requestPersistence } from './storage.js';
 import { registerServiceWorker } from './pwa.js';
 import { h, toast, alertDialog } from './ui.js';
+import { resetPanels } from './components.js';
+import { setupTerminal, updateTicker, updateStatusBar, openMenu } from './terminal.js';
+import { exportBackup } from './backup.js';
+import { openExpenseForm } from './screens/expense-form.js';
 import * as setup from './screens/setup.js';
 import * as beranda from './screens/beranda.js';
 import * as pengeluaran from './screens/pengeluaran.js';
@@ -27,14 +33,12 @@ import * as rutin from './screens/rutin.js';
 import * as pengaturan from './screens/pengaturan.js';
 import * as pos from './screens/pos.js';
 import * as rencana from './screens/rencana.js';
+import * as masuk from './screens/masuk.js';
 
-const SCREENS = { setup, beranda, pengeluaran, simulasi, rencana, ringkasan, dompet, rutin, pengaturan, pos };
+const SCREENS = { setup, beranda, pengeluaran, simulasi, rencana, masuk, ringkasan, dompet, rutin, pengaturan, pos };
 
-// On phones these screens are reached from another tab, so that tab stays lit.
-const PARENT_TAB = { simulasi: 'beranda', dompet: 'pengaturan', rutin: 'pengaturan', pos: 'pengaturan' };
-
-// Tab order decides the slide direction: moving right slides left, moving left slides right.
-const TAB_ORDER = ['beranda', 'pengeluaran', 'simulasi', 'rencana', 'ringkasan', 'dompet', 'rutin', 'pengaturan', 'pos'];
+// These screens are reached from Pengaturan, so its key stays lit (on wide screens).
+const PARENT_TAB = { dompet: 'pengaturan', rutin: 'pengaturan', pos: 'pengaturan' };
 
 // Remembered while the app is open (not saved).
 const ui = {
@@ -47,7 +51,6 @@ const ui = {
 let shownRoute = null;
 let shownToday = null;
 let pageChangePending = false;
-let titleWatcher = null;
 
 function routeFromHash() {
   const name = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
@@ -60,58 +63,51 @@ function go(route) {
   else window.location.hash = `#/${route}`;
 }
 
-function navDirection(from, to) {
-  if (PARENT_TAB[to] === from) return 'forward'; // going deeper
-  if (PARENT_TAB[from] === to) return 'back'; // coming back up
-  return TAB_ORDER.indexOf(to) >= TAB_ORDER.indexOf(from) ? 'forward' : 'back';
+/** Run a command from the command line, a function key or the LAIN menu (see commands.js). */
+function runCommand(command) {
+  if (!store.getData().setupDone) return;
+  if (command.route) go(command.route);
+  else if (command.action === 'menu') openMenu();
+  else if (command.action === 'catat') openExpenseForm({ data: store.getData(), today: todayStr() });
+  else if (command.action === 'cadangan') exportBackup(todayStr());
 }
 
+/** Light up the key of the current screen. On phones, screens without a visible key light up F5 LAIN. */
 function updateNav(route, animate) {
   const nav = document.querySelector('.nav');
-  for (const link of nav.querySelectorAll('.nav-item')) {
-    const target = link.dataset.route;
-    const current = target === route || (route === 'pos' && target === 'pengaturan');
-    if (current) link.setAttribute('aria-current', 'page');
-    else link.removeAttribute('aria-current');
-    link.classList.toggle('is-parent', !current && PARENT_TAB[route] === target);
+  const items = [...nav.querySelectorAll('.nav-item')];
+  const visible = (item) => item.getClientRects().length > 0;
+  let lit = false;
+  for (const item of items) {
+    const target = item.dataset.route;
+    const current = Boolean(target) && target === route;
+    if (current) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+    const parent = Boolean(target) && PARENT_TAB[route] === target && visible(item);
+    item.classList.toggle('is-parent', parent);
+    if ((current && visible(item)) || parent) lit = true;
   }
-  const selected = motion.moveNavIndicator(nav, { animate });
-  if (selected) motion.pop(selected.querySelector('svg'));
-}
-
-/** The small title bar that fades in (with a blur) once the big title scrolls away. */
-function updateTopbar(title, main, entering) {
-  const topbar = document.querySelector('.topbar');
-  if (!topbar) return;
-  topbar.querySelector('.topbar-title').textContent = title;
-  if (titleWatcher) titleWatcher.disconnect();
-  if (entering) topbar.classList.remove('is-stuck');
-  const heading = main.querySelector('.screen-title');
-  if (!heading || !('IntersectionObserver' in window)) return;
-  titleWatcher = new IntersectionObserver(
-    ([entry]) => topbar.classList.toggle('is-stuck', !entry.isIntersecting && entry.boundingClientRect.top < 100),
-    { rootMargin: '-48px 0px 0px 0px' },
-  );
-  titleWatcher.observe(heading);
+  const lain = nav.querySelector('[data-action="menu"]');
+  if (lain) lain.classList.toggle('is-parent', !lit);
+  motion.moveNavIndicator(nav, { animate });
 }
 
 function errorScreen() {
   return h(
     'section',
-    { class: 'card stack' },
-    h('h1', { class: 'screen-title', text: 'Ups, ada masalah' }),
-    h('p', { text: 'Halaman ini gagal ditampilkan. Datamu tetap aman. Coba muat ulang aplikasi.' }),
-    h('button', { type: 'button', class: 'btn btn-primary', onclick: () => window.location.reload() }, 'Muat ulang'),
+    { class: 'card' },
+    h('h1', { class: 'screen-title' }, 'Ups, ada masalah'),
+    h('div', { class: 'card-body' }, h('p', { text: 'Halaman ini gagal ditampilkan. Datamu tetap aman. Coba muat ulang aplikasi.' }), h('button', { type: 'button', class: 'btn btn-primary', onclick: () => window.location.reload() }, 'Muat ulang')),
   );
 }
 
-/** Let the sections of a newly opened screen (and the first rows of its lists) come in one after another. */
+/** Let the panels of a newly opened screen (and the first rows of their lists) appear one after another, quickly. */
 function staggerIn(main) {
   if (motion.reducedMotion()) return;
-  [...main.children].slice(0, 8).forEach((section, i) => {
-    motion.enter(section, { delay: i * 30, y: 10 });
-    const rows = section.querySelectorAll('.rows > li, .bucket-list > li, .timeline > li');
-    [...rows].slice(0, 8).forEach((row, j) => motion.enter(row, { delay: i * 30 + 60 + j * 22, y: 6 }));
+  [...main.children].slice(0, 10).forEach((section, i) => {
+    motion.enter(section, { delay: i * 15, y: 4 });
+    const rows = section.querySelectorAll('.rows > li, .bucket-list > li, .timeline > li, .inst-list > li');
+    [...rows].slice(0, 10).forEach((row, j) => motion.enter(row, { delay: i * 15 + 30 + j * 15, y: 0 }));
   });
 }
 
@@ -131,8 +127,9 @@ function draw({ entering = false, slide = null } = {}) {
   const snapshot = !entering && !slide ? motion.captureLayout(main) : null;
 
   main.replaceChildren();
+  resetPanels();
   try {
-    screen.render(main, { data, today, ui, go, refresh: render });
+    screen.render(main, { data, today, ui, go, refresh: render, entering });
   } catch (error) {
     console.error(error);
     main.replaceChildren(errorScreen());
@@ -140,7 +137,8 @@ function draw({ entering = false, slide = null } = {}) {
 
   if (entering) {
     window.scrollTo(0, 0);
-    main.focus({ preventScroll: true });
+    // Focus the new screen (for keyboards and screen readers), unless someone is typing a command.
+    if (!(document.activeElement && document.activeElement.closest('.cmdline'))) main.focus({ preventScroll: true });
   } else {
     window.scrollTo(0, scrollY);
   }
@@ -150,12 +148,14 @@ function draw({ entering = false, slide = null } = {}) {
   if (snapshot) motion.playLayout(main, snapshot);
   if (entering) staggerIn(main);
   if (slide) motion.slideIn(main, slide);
-  updateTopbar(screen.title, main, entering);
+
+  updateStatusBar(data);
+  if (data.setupDone) updateTicker(data, today);
 }
 
 /**
  * Show the current screen. Called on start, on navigation and after every
- * data change. A change of screen uses a page transition; a redraw of the
+ * data change. A change of screen uses a short crossfade; a redraw of the
  * same screen animates only what changed.
  */
 function render(options = {}) {
@@ -170,7 +170,6 @@ function render(options = {}) {
     return;
   }
   if (shownRoute !== null && route !== shownRoute) {
-    const direction = navDirection(shownRoute, route);
     shownRoute = route;
     pageChangePending = true;
     const safety = setTimeout(() => {
@@ -178,14 +177,14 @@ function render(options = {}) {
         pageChangePending = false;
         draw({ entering: true });
       }
-    }, 1500);
+    }, 1000);
     motion.pageTransition(
       () => {
         clearTimeout(safety);
         pageChangePending = false;
         draw({ entering: true });
       },
-      direction,
+      'forward',
       document.getElementById('main'),
     );
     return;
@@ -211,11 +210,22 @@ function start() {
   store.load(todayStr());
   store.subscribe(() => render());
   window.addEventListener('hashchange', () => render());
+  setupTerminal({ run: runCommand });
+  document.querySelector('[data-action="menu"]')?.addEventListener('click', () => openMenu());
   render();
 
   const messages = store.takeLoadMessages();
   if (messages.length) alertDialog({ title: 'Perhatian', message: messages });
-  if (store.takeUpgradeInfo()) toast('Uang Bulanan sudah diperbarui. Datamu aman, dan salinan data lama disimpan otomatis.', 'success');
+  const upgradedFrom = store.takeUpgradeInfo();
+  if (upgradedFrom) {
+    toast(
+      upgradedFrom < 3
+        ? 'Uang Bulanan sudah diperbarui. Datamu aman (salinan lama disimpan). Uang bulananmu sekarang satu kali uang masuk; bagi jadi bertahap di Pengaturan → Jadwal Uang Masuk.'
+        : 'Uang Bulanan sudah diperbarui. Datamu aman, dan salinan data lama disimpan otomatis.',
+      'success',
+      { ms: 9000 },
+    );
+  }
 
   requestPersistence(); // ask the browser not to delete our data when space is low
   registerServiceWorker(); // offline support + update banner
@@ -223,11 +233,11 @@ function start() {
   // iPhone Safari only shows the "pressed" look (:active) if the page listens for touches.
   document.addEventListener('touchstart', () => {}, { passive: true });
 
-  // Keep the tab highlight under the right tab when the window size changes.
+  // Keep the key highlight under the right key when the window size changes.
   let resizeFrame = 0;
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizeFrame);
-    resizeFrame = requestAnimationFrame(() => motion.moveNavIndicator(document.querySelector('.nav'), { animate: false }));
+    resizeFrame = requestAnimationFrame(() => updateNav(shownRoute, false));
   });
 
   setInterval(checkNewDay, 30_000);

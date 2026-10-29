@@ -10,14 +10,21 @@
 //   1 – the first app version (old data may not have the number at all)
 //   2 – adds "Rencana Cukup" plans (data.plans) and an optional due day on
 //       recurring bills (recurring[].dueDay)
+//   3 – money can arrive in installments ("Uang Masuk Bertahap"):
+//       settings.incomeSchedule [{ id, day, amount }] (its sum = monthlyIncome),
+//       settings.calcMode ('hati-hati' | 'total'), special incomes per period as
+//       installments (incomeOverrides[start] = { installments: [{ id, date, amount }] })
+//       and moved installments (incomeDelays[start] = { installmentId: date }).
+//       settings.incomeDay is kept as a copy of the earliest installment day.
 // When the shape changes again: bump SCHEMA_VERSION, add a step to migrate(),
 // and add tests to tests/migration.test.js.
 // -----------------------------------------------------------------------------
 
-import { isValidDateStr, percentTotal, daysBetween } from './logic.js';
+import { isValidDateStr, percentTotal, daysBetween, getPeriod, CALC_MODES, MAX_INSTALLMENTS } from './logic.js';
+import { formatRupiah } from './format.js';
 
 export const APP_ID = 'uang-bulanan';
-export const SCHEMA_VERSION = 2; // bump this (and add a step to migrate()) if the data shape changes
+export const SCHEMA_VERSION = 3; // bump this (and add a step to migrate()) if the data shape changes
 export const MAX_AMOUNT = 1_000_000_000; // Rp 1 miliar: the biggest amount accepted anywhere
 export const MAX_NAME_LENGTH = 30;
 export const MAX_NOTE_LENGTH = 100;
@@ -45,8 +52,10 @@ export function createEmptyData() {
     schemaVersion: SCHEMA_VERSION,
     setupDone: false,
     settings: {
-      monthlyIncome: 0,
-      incomeDay: 1,
+      monthlyIncome: 0, // the monthly total = the sum of incomeSchedule
+      incomeDay: 1, // copy of the earliest installment day (the day every period starts)
+      incomeSchedule: [], // [{ id, day, amount }]: when the money arrives each month
+      calcMode: 'hati-hati', // "Cara hitung": 'hati-hati' (only money that arrived) or 'total'
       setupDate: null, // 'YYYY-MM-DD' when setup was finished
       lastBackupDate: null, // 'YYYY-MM-DD' of the last export
       lastBucketId: null, // remembered for faster entry
@@ -56,7 +65,8 @@ export function createEmptyData() {
     wallets: DEFAULT_WALLETS.map((w) => ({ ...w })),
     expenses: [],
     recurring: [],
-    incomeOverrides: {},
+    incomeOverrides: {}, // special income for one period: { start: { installments: [{ id, date, amount }] } }
+    incomeDelays: {}, // installments that came late: { start: { installmentId: 'YYYY-MM-DD' } }
     savings: [],
     plans: { active: null, history: [] }, // "Rencana Cukup": one active plan + finished ones
   };
@@ -109,11 +119,6 @@ export function checkPercent(value) {
   return '';
 }
 
-export function checkIncomeDay(value) {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 31) return 'Pilih tanggal 1 sampai 31.';
-  return '';
-}
-
 /** Check a whole list of buckets: names, percents, and a total of exactly 100%. */
 export function checkBuckets(buckets) {
   if (!Array.isArray(buckets) || buckets.length === 0) return 'Minimal harus ada satu pos.';
@@ -158,7 +163,29 @@ export function migrate(input) {
     data.recurring = asList(input.recurring).map((bill) => (isObject(bill) ? { ...bill, dueDay: null } : bill));
     version = 2;
   }
-  // A future version 3 would continue here: if (version < 3) { ...; version = 3; }
+  if (version < 3) {
+    // Version 2 -> 3: the one monthly amount becomes a schedule with a single
+    // installment ("Sekaligus") on the same income day, so every number stays the
+    // same. A special income for one period becomes one installment on that
+    // period's first day. Recurring bills keep their due day (empty = the period's
+    // first day, which is how version 2 counted them).
+    if (isObject(input.settings)) {
+      const settings = { ...input.settings };
+      const day = isWhole(settings.incomeDay, 1, 31) ? settings.incomeDay : 1;
+      settings.incomeSchedule = isWhole(settings.monthlyIncome, 1, MAX_AMOUNT) ? [{ id: 'i-1', day, amount: settings.monthlyIncome }] : [];
+      settings.calcMode = 'hati-hati';
+      data.settings = settings;
+    }
+    if (isObject(input.incomeOverrides)) {
+      data.incomeOverrides = {};
+      for (const [start, amount] of Object.entries(input.incomeOverrides)) {
+        data.incomeOverrides[start] = isWhole(amount, 0, MAX_AMOUNT) ? { installments: amount > 0 ? [{ id: 'k-1', date: start, amount }] : [] } : amount;
+      }
+    }
+    data.incomeDelays = {};
+    version = 3;
+  }
+  // A future version 4 would continue here: if (version < 4) { ...; version = 4; }
   data.schemaVersion = version;
   return data;
 }
@@ -232,6 +259,48 @@ function normalizePlanHistory(e) {
 }
 
 /**
+ * Repair the monthly income schedule into `settings` (which already holds a
+ * checked monthlyIncome and incomeDay). Afterwards: 0–8 valid installments
+ * sorted by day, monthlyIncome = their sum, incomeDay = the earliest day.
+ */
+function normalizeSchedule(raw, settings, problems) {
+  const schedule = [];
+  if (Array.isArray(raw)) {
+    const ids = new Set();
+    let bad = 0;
+    for (const i of raw) {
+      if (!isObject(i) || !isWhole(i.day, 1, 31) || !isWhole(i.amount, 1, MAX_AMOUNT) || schedule.length >= MAX_INSTALLMENTS) {
+        bad++;
+        continue;
+      }
+      let id = typeof i.id === 'string' && i.id && !ids.has(i.id) ? i.id : '';
+      for (let n = ids.size + 1; !id; n++) if (!ids.has(`i-fix-${n}`)) id = `i-fix-${n}`;
+      ids.add(id);
+      schedule.push({ id, day: i.day, amount: i.amount });
+    }
+    if (bad) problems.push(`${bad} uang masuk di jadwal tidak valid dilewati. Periksa Jadwal Uang Masuk di Pengaturan.`);
+  }
+  if (!schedule.length && settings.monthlyIncome > 0) {
+    // No (usable) schedule: everything arrives at once on the income day.
+    schedule.push({ id: 'i-1', day: settings.incomeDay, amount: settings.monthlyIncome });
+  }
+  schedule.sort((a, b) => a.day - b.day);
+  const total = schedule.reduce((sum, i) => sum + i.amount, 0);
+  if (schedule.length && total !== settings.monthlyIncome) {
+    if (total > MAX_AMOUNT) {
+      problems.push('Jadwal uang masuk terlalu besar, jadi diganti satu kali uang masuk. Periksa di Pengaturan.');
+      schedule.length = 0;
+      if (settings.monthlyIncome > 0) schedule.push({ id: 'i-1', day: settings.incomeDay, amount: settings.monthlyIncome });
+    } else {
+      problems.push(`Total jadwal uang masuk tidak sama dengan uang bulanan, jadi uang bulanan disamakan menjadi ${formatRupiah(total)}. Periksa di Pengaturan.`);
+      settings.monthlyIncome = total;
+    }
+  }
+  settings.incomeSchedule = schedule;
+  if (schedule.length) settings.incomeDay = schedule[0].day;
+}
+
+/**
  * Check data from storage or a backup file and repair what is broken.
  * Never throws. Returns { data, problems }, where `problems` is a list of
  * Indonesian sentences describing what was repaired (empty if all was fine).
@@ -253,8 +322,11 @@ export function normalizeData(input) {
   if (!isObject(input.settings)) problems.push('Pengaturan tidak ditemukan, jadi memakai pengaturan awal.');
   if (isWhole(settings.monthlyIncome, 0, MAX_AMOUNT)) data.settings.monthlyIncome = settings.monthlyIncome;
   else if (isObject(input.settings)) problems.push('Uang bulanan tidak valid, jadi diatur ke Rp 0. Periksa di Pengaturan.');
-  if (isWhole(settings.incomeDay, 1, 31)) data.settings.incomeDay = settings.incomeDay;
-  else if (isObject(input.settings)) problems.push('Tanggal uang masuk tidak valid, jadi diatur ke tanggal 1. Periksa di Pengaturan.');
+  const dayOk = isWhole(settings.incomeDay, 1, 31);
+  if (dayOk) data.settings.incomeDay = settings.incomeDay;
+  normalizeSchedule(settings.incomeSchedule, data.settings, problems); // also sets incomeDay to the earliest installment day
+  if (!dayOk && isObject(input.settings)) problems.push(`Tanggal uang masuk tidak valid, jadi diatur ke tanggal ${data.settings.incomeDay}. Periksa di Pengaturan.`);
+  data.settings.calcMode = CALC_MODES.includes(settings.calcMode) ? settings.calcMode : 'hati-hati';
   data.settings.setupDate = validDateOrNull(settings.setupDate);
   data.settings.lastBackupDate = validDateOrNull(settings.lastBackupDate);
 
@@ -350,15 +422,53 @@ export function normalizeData(input) {
   if (badRecurring) problems.push(`${badRecurring} pengeluaran rutin tidak valid dilewati.`);
   if (movedRefs) problems.push(`${movedRefs} catatan menunjuk ke pos/dompet yang tidak ada, jadi dipindahkan ke "${data.buckets[0].name}"/"${data.wallets[0].name}".`);
 
-  // --- special income per period ---
+  // --- special income per period (installments with dates inside that period) ---
+  const startDay = data.settings.incomeDay;
   let badOverrides = 0;
   if (isObject(input.incomeOverrides)) {
-    for (const [start, amount] of Object.entries(input.incomeOverrides)) {
-      if (!checkDate(start) && isWhole(amount, 0, MAX_AMOUNT)) data.incomeOverrides[start] = amount;
-      else badOverrides++;
+    for (const [start, value] of Object.entries(input.incomeOverrides)) {
+      const list = isObject(value) && Array.isArray(value.installments) ? value.installments : null;
+      if (checkDate(start) || !list) {
+        badOverrides++;
+        continue;
+      }
+      const period = getPeriod(start, startDay);
+      const ids = new Set();
+      const installments = [];
+      for (const i of list) {
+        const ok = isObject(i) && !checkDate(i.date) && i.date >= period.start && i.date <= period.end && isWhole(i.amount, 1, MAX_AMOUNT);
+        if (!ok || installments.length >= MAX_INSTALLMENTS) {
+          badOverrides++;
+          continue;
+        }
+        let id = typeof i.id === 'string' && i.id && !ids.has(i.id) ? i.id : '';
+        for (let n = ids.size + 1; !id; n++) if (!ids.has(`k-fix-${n}`)) id = `k-fix-${n}`;
+        ids.add(id);
+        installments.push({ id, date: i.date, amount: i.amount });
+      }
+      // An empty list on purpose means "no money this period"; if every entry was broken, use the normal schedule.
+      if (installments.length || list.length === 0) data.incomeOverrides[start] = { installments: installments.sort((a, b) => a.date.localeCompare(b.date)) };
     }
   }
   if (badOverrides) problems.push(`${badOverrides} pemasukan khusus periode tidak valid dilewati.`);
+
+  // --- installments that came late ("Belum masuk, geser tanggal") ---
+  let badDelays = 0;
+  if (isObject(input.incomeDelays)) {
+    for (const [start, delays] of Object.entries(input.incomeDelays)) {
+      if (checkDate(start) || !isObject(delays)) {
+        badDelays++;
+        continue;
+      }
+      const kept = {};
+      for (const [id, to] of Object.entries(delays)) {
+        if (id && !checkDate(to)) kept[id] = to;
+        else badDelays++;
+      }
+      if (Object.keys(kept).length) data.incomeDelays[start] = kept;
+    }
+  }
+  if (badDelays) problems.push(`${badDelays} penundaan uang masuk tidak valid dilewati.`);
 
   // --- savings entries ("Pindahkan sisa ke Tabungan") ---
   let badSavings = 0;
